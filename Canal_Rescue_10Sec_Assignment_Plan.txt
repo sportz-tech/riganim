@@ -1,0 +1,113 @@
+================================================================================
+          THE CANAL RESCUE: 10-SECOND 3D ANIMATION PRODUCTION MASTER PLAN
+                  Based on True Viral Human Chain Rescue Story
+================================================================================
+
+PROJECT SPECIFICATIONS:
+--------------------------------------------------------------------------------
+* Total Duration: Exactly 10.0 Seconds
+* Project Frame Rate: 30 FPS (Frames Per Second)
+* Total Frame Count: 300 Frames Total (Frames 1 to 300)
+* Character Rigs:
+  - Rescuer 1 (Hero in Canal) - Human Biped
+  - Duplicated Rescuers (2 or 3 Characters on Wall for Human Chain) - Shift+D
+  - Trapped Dog - Animal Quadruped Rig
+* Setting: Steep concrete/sloped canal bank, slippery wet water line, canal ledge.
+
+================================================================================
+3-ACT CINEMATIC STORYBOARD & TIMELINE BREAKDOWN (30 FPS = 300 FRAMES)
+================================================================================
+
+--------------------------------------------------------------------------------
+ACT 1: THE TRAP & THE LEAP (0.0s to 3.0s | Frames 1 to 90)
+--------------------------------------------------------------------------------
+Theme: Urgency & Emotion
+
+* Frames 1 to 35 (Dog's Panic & Hero Sprint):
+  - Shot 1 (Wide/Medium Low): The dog is paddling frantically in the canal water,
+    struggling to grip the steep, slippery concrete slope.
+  - The hero notices the situation from the upper ledge and sprints to the edge.
+
+* Frames 36 to 90 (The Vault & Jump In):
+  - Shot 2 (Wide Cinematic): The man reaches the ledge, drops down, plants one 
+    hand on the edge/railing, and performs an explosive vault leap down into the canal!
+  - Frame 75-80: He splashes into the canal water and wades toward the dog.
+
+* Rigging & Addon Execution:
+  1. Hero Rig: Use "Run Loop" (Frames 1-35), then "Prop Jump & Cross / Rail Vault" (Frames 36-80).
+  2. Dog Rig: Animate front paws paddling against water level.
+
+--------------------------------------------------------------------------------
+ACT 2: THE PHYSICAL STRUGGLE & SLIPPERY WALL (3.0s to 6.0s | Frames 91 to 180)
+--------------------------------------------------------------------------------
+Theme: Weight, Slippery Surface, Frustration & Realization
+
+* Frames 91 to 135 (Scooping the Dog):
+  - Shot 3 (Water-Level Medium Shot): The hero reaches the dog, wraps both arms 
+    underneath the dog's chest, lifting its head securely above water.
+  - The dog calms down and clings onto the rescuer's shoulder.
+
+* Frames 136 to 180 (The Failed Climb & Slip):
+  - Shot 4 (Medium Low Angle looking up the slope):
+  - The hero tries to climb up the steep concrete canal slope with one foot planted.
+  - Due to the slippery algae/wet surface and the dog's heavy weight, his feet slip 
+    backward down the slope into the water!
+  - He looks up towards the top ledge, panting and realizing he cannot get out alone.
+
+* Body Mechanics Notes:
+  - Weight & Tension: Keep the hero's spine bent forward (carrying dog).
+  - Slipping Foot: Keyframe CTRL-foot_IK slipping back quickly by 0.4m on the slope 
+    with hips dropping suddenly to show lost traction.
+
+--------------------------------------------------------------------------------
+ACT 3: THE HUMAN CHAIN & TRIUMPHANT RESCUE (6.0s to 10.0s | Frames 181 to 300)
+--------------------------------------------------------------------------------
+Theme: Teamwork, Coordinated Pull, Emotional Payoff
+
+* Frames 181 to 225 (Forming the Human Chain):
+  - Shot 5 (High-Angle Down the Slope): 
+  - 2 additional rescuers (duplicated character rigs) arrive at the canal ledge!
+  - Top Rescuer anchors feet on solid ground and holds the wrists of Middle Rescuer.
+  - Middle Rescuer leans down the slope, extending his arm towards the canal water.
+
+* Frames 226 to 275 (The Hand Grip & Coordinated Haul):
+  - Shot 6 (Close-Up / Medium Hero Cut):
+  - The hero reaches up with one hand; the bottom rescuer's hand GRIPS his wrist!
+  - All rescuers tense their backs and pull in unison (co-ordinated backward lean).
+  - The hero and dog are lifted up the concrete slope, clear of the water!
+
+* Frames 276 to 300 (Safety & Emotional Relief):
+  - Shot 7 (Top Ledge 3/4 Medium Shot):
+  - The man and dog are pulled over the ledge onto safe, dry ground.
+  - The dog is set down, shaking off water droplets, while the rescuers smile 
+    and catch their breath in triumph!
+
+================================================================================
+STEP-BY-STEP RIGGING & SETUP IN BLENDER:
+================================================================================
+
+1. HOW TO DUPLICATE THE CHARACTER FOR THE HUMAN CHAIN:
+   - Select your character armature AND the character mesh together in Object Mode.
+   - Press 'Shift + D' and move along X axis to create Rescuer 2 and Rescuer 3.
+   - Each duplicated rig gets its own independent pose controllers!
+
+2. HOW TO RIG THE WRIST-TO-WRIST HUMAN CHAIN:
+   - For Rescuer 2 (holding Rescuer 1):
+     Add a "Child Of" constraint on Rescuer 1's CTRL-hand_IK.R targeting 
+     Rescuer 2's hand bone (or use standard Inverse Kinematics).
+   - When the top rescuer pulls backward, the whole chain moves together smoothly!
+
+3. ATTACHING THE DOG TO THE RESCUER:
+   - On the Dog rig's root bone: add a "Child Of" constraint targeting the 
+     hero's chest bone ('spine.003') with Influence = 1.0 starting at Frame 115.
+
+4. 4 CAMERA CUTS ON TIMELINE:
+   - Camera 1 (Sprint & Discovery): Frame 1
+   - Camera 2 (Vault & Splash In):  Frame 36
+   - Camera 3 (Slippery Wall Slip): Frame 136
+   - Camera 4 (Human Chain Pull):   Frame 181
+   - In HumanRigGenerator, bind each camera to its cut frame using Timeline Cuts!
+
+================================================================================
+                      END OF PRODUCTION MASTER PLAN
+================================================================================

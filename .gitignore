@@ -1,0 +1,20 @@
+# Logs
+*.log
+mocap_debug.log
+backend_debug.log
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary and package archives
+*.zip
+*.tar.gz
+*.tmp
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
