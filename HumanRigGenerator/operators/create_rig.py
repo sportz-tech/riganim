@@ -147,6 +147,11 @@ class OBJECT_OT_generate_human_rig(bpy.types.Operator):
                     pass
                     
                 # Re-select rig and put in Pose mode for instant animation
+                if context.object and context.object.mode != 'OBJECT':
+                    try:
+                        bpy.ops.object.mode_set(mode='OBJECT')
+                    except Exception:
+                        pass
                 bpy.ops.object.select_all(action='DESELECT')
                 obj.select_set(True)
                 context.view_layer.objects.active = obj

@@ -1020,7 +1020,7 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             if cloth == body_obj:
                 continue
                 
-            # Clean old modifier artifacts
+            # Clean all old modifiers except Armature
             for m in list(cloth.modifiers):
                 if m.type in ['SHRINKWRAP', 'DATA_TRANSFER', 'MASK'] or "Cloth_No_Clip" in m.name or "HRG_" in m.name:
                     cloth.modifiers.remove(m)
@@ -1031,6 +1031,14 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             dt_mod.use_vert_data = True
             dt_mod.data_types_verts = {'VGROUP_WEIGHTS'}
             dt_mod.vert_mapping = 'POLYINTERP_NEAREST'
+            
+            # Move Data Transfer to top of stack for clean modifier_apply
+            dt_idx = cloth.modifiers.find(dt_mod.name)
+            if dt_idx > 0:
+                try:
+                    cloth.modifiers.move(dt_idx, 0)
+                except Exception:
+                    pass
             
             bpy.ops.object.select_all(action='DESELECT')
             cloth.select_set(True)
@@ -1045,6 +1053,13 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
                 bpy.ops.object.modifier_apply(modifier=dt_mod.name)
             except Exception:
                 pass
+                
+            # If modifier still remains on object, remove it so it doesn't dynamically distort in Pose Mode
+            if dt_mod.name in cloth.modifiers:
+                try:
+                    cloth.modifiers.remove(cloth.modifiers[dt_mod.name])
+                except Exception:
+                    pass
                 
             # 3. Ensure clean Armature modifier with Preserve Volume
             arm_mod = None
