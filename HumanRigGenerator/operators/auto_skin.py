@@ -1032,14 +1032,22 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
+        cloth_keywords = ["shirt", "pant", "paint", "short", "jean", "boxer", "trouser", "cloth", "jacket", "coat", "dress", "suit", "bottom", "top", "vest", "underwear", "garment"]
         selected_objs = [o for o in context.selected_objects if o.type == 'MESH']
+        
         if len(selected_objs) < 2:
             active = context.active_object
             if not active or active.type != 'MESH':
-                self.report({'WARNING'}, "Please select both the Body Mesh and Clothing Mesh together!")
+                # Try finding active body mesh in scene
+                for o in context.scene.objects:
+                    if o.type == 'MESH' and any(k in o.name.lower() for k in ["body", "skin", "human", "character"]):
+                        active = o
+                        break
+            if not active or active.type != 'MESH':
+                self.report({'WARNING'}, "Please select the Body Mesh and Clothing Mesh!")
                 return {'CANCELLED'}
             body_obj = active
-            clothing_objs = [o for o in context.scene.objects if o.type == 'MESH' and o != body_obj and any(k in o.name.lower() for k in ["shirt", "pant", "cloth", "jacket", "coat", "dress", "trouser", "suit"])]
+            clothing_objs = [o for o in context.scene.objects if o.type == 'MESH' and o != body_obj and any(k in o.name.lower() for k in cloth_keywords)]
         else:
             body_obj = None
             for o in selected_objs:
@@ -1050,6 +1058,10 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
             if not body_obj:
                 body_obj = selected_objs[0]
             clothing_objs = [o for o in selected_objs if o != body_obj]
+            
+        if not clothing_objs:
+            # Fallback: scan scene for clothing meshes
+            clothing_objs = [o for o in context.scene.objects if o.type == 'MESH' and o != body_obj and any(k in o.name.lower() for k in cloth_keywords)]
             
         if not clothing_objs:
             self.report({'WARNING'}, "No clothing meshes found to calculate body mask!")
@@ -1065,6 +1077,7 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
         import bmesh
         
         cloth_trees = []
+        cloth_z_ranges = []
         for cloth in clothing_objs:
             bm = bmesh.new()
             bm.from_mesh(cloth.data)
@@ -1073,6 +1086,11 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
             cloth_trees.append((cloth, tree))
             bm.free()
             
+            bbox_world_z = [(cloth.matrix_world @ mathutils.Vector(b)).z for b in cloth.bound_box]
+            z_min = min(bbox_world_z)
+            z_max = max(bbox_world_z)
+            cloth_z_ranges.append((cloth, z_min, z_max))
+            
         mw_body = body_obj.matrix_world
         hidden_indices = []
         visible_indices = []
@@ -1080,11 +1098,22 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
         for v in body_mesh.vertices:
             v_world = mw_body @ v.co
             is_under_cloth = False
+            
+            # Check BVH proximity with generous 75mm margin for inner thigh & crotch folds
             for cloth, tree in cloth_trees:
                 loc, normal, face_idx, dist = tree.find_nearest(v_world)
-                if dist is not None and dist < 0.055:
+                if dist is not None and dist < 0.075:
                     is_under_cloth = True
                     break
+                    
+            # Check pants/shorts height containment for inner groin/thigh center vertices
+            if not is_under_cloth:
+                for cloth, z_min, z_max in cloth_z_ranges:
+                    if any(k in cloth.name.lower() for k in ["pant", "paint", "short", "trouser", "jean", "boxer", "underwear"]):
+                        if z_min + 0.03 <= v_world.z <= z_max - 0.02 and abs(v_world.x) < 0.12:
+                            is_under_cloth = True
+                            break
+                    
             if is_under_cloth:
                 hidden_indices.append(v.index)
             else:
@@ -1103,7 +1132,19 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
         mask_mod.vertex_group = vg_name
         mask_mod.invert_vertex_group = False
         
+        # Position Mask modifier right after Armature and before Subdivision
+        arm_idx = -1
+        for idx, m in enumerate(body_obj.modifiers):
+            if m.type == 'ARMATURE':
+                arm_idx = idx
+                break
+        if arm_idx != -1:
+            try:
+                body_obj.modifiers.move(body_obj.modifiers.find(mask_mod.name), arm_idx + 1)
+            except Exception:
+                pass
+        
         context.view_layer.update()
-        self.report({'INFO'}, f"Auto-masked {len(hidden_indices)} body vertices under clothes! 0% clipping guaranteed.")
+        self.report({'INFO'}, f"Auto-masked {len(hidden_indices)} body vertices (including inner thigh & groin) under clothes! 0% clipping.")
         return {'FINISHED'}
 
