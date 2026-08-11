@@ -852,84 +852,83 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                 except Exception as e_lids:
                     log_file.write(f"Eyelid weight painting failed: {e_lids}\n")
                     
-                # Isolated limb weight and spine cleanup across mesh
-                cleanup_limb_bleed(mesh_obj, rig_obj, log_file)
-                    
-                # Foot and Toe weight cleanup
-                try:
-                    bpy.context.view_layer.update()
-                    pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
-                    center_x = 0.0
-                    if pelvis_pb:
-                        center_x = (rig_obj.matrix_world @ pelvis_pb.head).x
-                    left_is_positive_x = True
-                    l_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.L")
-                    if l_thigh_pb:
-                        l_thigh_x = (rig_obj.matrix_world @ l_thigh_pb.head).x
-                        left_is_positive_x = (l_thigh_x > center_x)
-                        
-                    for side in [".L", ".R"]:
-                        foot_name = f"DEF-foot{side}"
-                        toe_name = f"DEF-toe{side}"
-                        foot_vg = mesh_obj.vertex_groups.get(foot_name) or mesh_obj.vertex_groups.new(name=foot_name)
-                        toe_vg = mesh_obj.vertex_groups.get(toe_name) or mesh_obj.vertex_groups.new(name=toe_name)
-                        
-                        foot_pb = rig_obj.pose.bones.get(foot_name)
-                        toe_pb = rig_obj.pose.bones.get(toe_name)
-                        ankle_z = 0.0
-                        
-                        marker_obj = bpy.data.objects.get(f"Mkr_ankle{side}")
-                        if marker_obj:
-                            ankle_z = marker_obj.location.z
-                        elif foot_pb:
-                            ankle_z = (rig_obj.matrix_world @ foot_pb.head).z
+                # Foot and Toe weight cleanup (only for body and foot/shoe meshes, never upper clothing/shirts)
+                is_upper = any(k in mesh_obj.name.lower() for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt", "hoodie", "sweater", "bra", "chest"])
+                if not is_upper:
+                    try:
+                        bpy.context.view_layer.update()
+                        pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
+                        center_x = 0.0
+                        if pelvis_pb:
+                            center_x = (rig_obj.matrix_world @ pelvis_pb.head).x
+                        left_is_positive_x = True
+                        l_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.L")
+                        if l_thigh_pb:
+                            l_thigh_x = (rig_obj.matrix_world @ l_thigh_pb.head).x
+                            left_is_positive_x = (l_thigh_x > center_x)
                             
-                        if foot_pb and toe_pb and ankle_z > 0.0:
-                            f_head = rig_obj.matrix_world @ foot_pb.head
-                            f_tail = rig_obj.matrix_world @ foot_pb.tail
-                            t_head = rig_obj.matrix_world @ toe_pb.head
-                            t_tail = rig_obj.matrix_world @ toe_pb.tail
-                            mw = mesh_obj.matrix_world
+                        for side in [".L", ".R"]:
+                            foot_name = f"DEF-foot{side}"
+                            toe_name = f"DEF-toe{side}"
                             
-                            assigned_foot = 0
-                            assigned_toe = 0
-                            for v in mesh_obj.data.vertices:
-                                v_world = mw @ v.co
-                                if v_world.z < ankle_z - 0.005:
-                                    is_on_left_side = (v_world.x > center_x) if left_is_positive_x else (v_world.x < center_x)
-                                    correct_side = (side == ".L" and is_on_left_side) or (side == ".R" and not is_on_left_side)
-                                    if correct_side:
-                                        _, f_t = mathutils.geometry.intersect_point_line(v_world, f_head, f_tail)
-                                        f_t = max(0.0, min(1.0, f_t))
-                                        f_closest = f_head + f_t * (f_tail - f_head)
-                                        f_dist = (v_world - f_closest).length
-                                        
-                                        _, t_t = mathutils.geometry.intersect_point_line(v_world, t_head, t_tail)
-                                        t_t = max(0.0, min(1.0, t_t))
-                                        t_closest = t_head + t_t * (t_tail - t_head)
-                                        t_dist = (v_world - t_closest).length
-                                        
-                                        if f_dist < t_dist:
-                                            for vg in mesh_obj.vertex_groups:
-                                                if vg != foot_vg:
-                                                    vg.remove([v.index])
-                                            foot_vg.add([v.index], 1.0, 'REPLACE')
-                                            assigned_foot += 1
-                                        else:
-                                            for vg in mesh_obj.vertex_groups:
-                                                if vg != toe_vg:
-                                                    vg.remove([v.index])
-                                            toe_vg.add([v.index], 1.0, 'REPLACE')
-                                            assigned_toe += 1
-                            log_file.write(f"Foot weight cleanup ({side}) at Z={ankle_z:.4f}: assigned {assigned_foot} to foot, {assigned_toe} to toe.\n")
-                except Exception as e_foot:
-                    log_file.write(f"Foot cleanup failed: {e_foot}\n")
-                    
+                            foot_pb = rig_obj.pose.bones.get(foot_name)
+                            toe_pb = rig_obj.pose.bones.get(toe_name)
+                            ankle_z = 0.0
+                            
+                            marker_obj = bpy.data.objects.get(f"Mkr_ankle{side}")
+                            if marker_obj:
+                                ankle_z = marker_obj.location.z
+                            elif foot_pb:
+                                ankle_z = (rig_obj.matrix_world @ foot_pb.head).z
+                                
+                            if foot_pb and toe_pb and ankle_z > 0.0:
+                                f_head = rig_obj.matrix_world @ foot_pb.head
+                                f_tail = rig_obj.matrix_world @ foot_pb.tail
+                                t_head = rig_obj.matrix_world @ toe_pb.head
+                                t_tail = rig_obj.matrix_world @ toe_pb.tail
+                                mw = mesh_obj.matrix_world
+                                
+                                foot_verts = []
+                                toe_verts = []
+                                for v in mesh_obj.data.vertices:
+                                    v_world = mw @ v.co
+                                    if v_world.z < ankle_z - 0.005:
+                                        is_on_left_side = (v_world.x > center_x) if left_is_positive_x else (v_world.x < center_x)
+                                        correct_side = (side == ".L" and is_on_left_side) or (side == ".R" and not is_on_left_side)
+                                        if correct_side:
+                                            _, f_t = mathutils.geometry.intersect_point_line(v_world, f_head, f_tail)
+                                            f_t = max(0.0, min(1.0, f_t))
+                                            f_closest = f_head + f_t * (f_tail - f_head)
+                                            f_dist = (v_world - f_closest).length
+                                            
+                                            _, t_t = mathutils.geometry.intersect_point_line(v_world, t_head, t_tail)
+                                            t_t = max(0.0, min(1.0, t_t))
+                                            t_closest = t_head + t_t * (t_tail - t_head)
+                                            t_dist = (v_world - t_closest).length
+                                            
+                                            if f_dist < t_dist:
+                                                foot_verts.append(v.index)
+                                            else:
+                                                toe_verts.append(v.index)
+                                if foot_verts or toe_verts:
+                                    foot_vg = mesh_obj.vertex_groups.get(foot_name) or mesh_obj.vertex_groups.new(name=foot_name)
+                                    toe_vg = mesh_obj.vertex_groups.get(toe_name) or mesh_obj.vertex_groups.new(name=toe_name)
+                                    if foot_verts:
+                                        foot_vg.add(foot_verts, 1.0, 'REPLACE')
+                                    if toe_verts:
+                                        toe_vg.add(toe_verts, 1.0, 'REPLACE')
+                                log_file.write(f"Foot weight cleanup ({side}) at Z={ankle_z:.4f}: assigned {len(foot_verts)} to foot, {len(toe_verts)} to toe.\n")
+                    except Exception as e_foot:
+                        log_file.write(f"Foot cleanup failed: {e_foot}\n")
+                        
                 # Auto-assign any unweighted vertices (like loose ponytail strands) to the nearest deforming bone
                 try:
                     assign_unweighted_vertices(mesh_obj, rig_obj, log_file)
                 except Exception as e_unweighted:
                     log_file.write(f"Assign unweighted vertices failed: {e_unweighted}\n")
+                    
+                # Final Isolated limb weight, clothing isolation, and spine cleanup across mesh
+                cleanup_limb_bleed(mesh_obj, rig_obj, log_file)
                     
                 # Restore original pose transforms for this mesh
                 for b_name, transforms in pose_backup.items():
