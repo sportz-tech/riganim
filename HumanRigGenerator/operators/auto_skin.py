@@ -136,7 +136,7 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                         if arm_verts:
                             f_vg.remove(arm_verts)
                     
-        # 4. Neck, Head & Jaw Anatomical Weighting (neck strictly decoupled from shoulders)
+        # 4. Neck, Head & Jaw Anatomical Weighting (strict neck/head isolation; clothing protected in jumps)
         neck_pb = rig_obj.pose.bones.get("DEF-neck")
         head_pb = rig_obj.pose.bones.get("DEF-head")
         jaw_pb = rig_obj.pose.bones.get("DEF-jaw")
@@ -145,33 +145,9 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
         vg_head = mesh_obj.vertex_groups.get("DEF-head")
         vg_jaw = mesh_obj.vertex_groups.get("DEF-jaw")
         
-        # Strictly Decouple Neck & Head from Shoulders/Trapezius on ALL meshes (body and shirt)
-        if neck_pb:
-            n_head_z = (rig_obj.matrix_world @ neck_pb.head).z
-            
-            # Shoulder vertices (|X - center_x| > 0.055 and Z < n_head_z + 0.04) must NEVER have neck/head/jaw weights
-            shoulder_verts = [v.index for v in mesh_obj.data.vertices if abs((mw @ v.co).x - center_x) > 0.055 and (mw @ v.co).z < n_head_z + 0.04]
-            if shoulder_verts:
-                if vg_neck:
-                    vg_neck.remove(shoulder_verts)
-                if vg_head:
-                    vg_head.remove(shoulder_verts)
-                if vg_jaw:
-                    vg_jaw.remove(shoulder_verts)
-                    
-            # Below neck base belongs to chest/spine, NEVER neck/head/jaw
-            below_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015]
-            if below_neck:
-                if vg_neck:
-                    vg_neck.remove(below_neck)
-                if vg_head:
-                    vg_head.remove(below_neck)
-                if vg_jaw:
-                    vg_jaw.remove(below_neck)
-                    
         is_clothing = any(k in mesh_obj.name.lower() for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt", "pant", "paint", "short", "trouser", "jean", "boxer", "cloth"])
         if is_clothing:
-            # Transfer any remaining head/face weights on clothing to neck / spine.003
+            # Transfer head weights on clothing to DEF-neck / DEF-spine.003 so shirt stays attached in Jump
             vg_spine3 = mesh_obj.vertex_groups.get("DEF-spine.003")
             if vg_head:
                 for v in mesh_obj.data.vertices:
@@ -182,27 +158,41 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                             elif vg_spine3:
                                 vg_spine3.add([v.index], g.weight, 'ADD')
                                 
-            # Purge all head/face/jaw/eye detail groups from clothing
+            # Purge head, jaw, face, eye detail groups from clothing
             vgs_to_remove = [vg.name for vg in mesh_obj.vertex_groups if any(k in vg.name.lower() for k in ["head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face"])]
             for vgn in vgs_to_remove:
                 vg = mesh_obj.vertex_groups.get(vgn)
                 if vg:
                     mesh_obj.vertex_groups.remove(vg)
         else:
-            # On Body Mesh: Throat vertices transfer cleanly to DEF-head so no tearing occurs
-            if jaw_pb and vg_jaw and neck_pb:
-                j_head_z = (rig_obj.matrix_world @ jaw_pb.head).z
-                j_head_y = (rig_obj.matrix_world @ jaw_pb.head).y
-                n_head_z = (rig_obj.matrix_world @ neck_pb.head).z
+            # On Body Mesh:
+            if neck_pb and head_pb:
+                n_head_z = (rig_obj.matrix_world @ neck_pb.head).z  # ~1.49m (base of neck)
+                h_head_z = (rig_obj.matrix_world @ head_pb.head).z  # ~1.62m (jaw / base of skull)
                 
-                not_jaw = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < j_head_z - 0.035 or (mw @ v.co).y < j_head_y - 0.04]
-                if not_jaw:
-                    vg_jaw.remove(not_jaw)
-                    if vg_head:
-                        for vi in not_jaw:
-                            if (mw @ mesh_obj.data.vertices[vi].co).z >= n_head_z:
-                                vg_head.add([vi], 1.0, 'ADD')
-                                
+                # 1. DEF-head strictly limited to skull/face (Z >= h_head_z - 0.02) - never touches shoulders or chest
+                below_skull = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < h_head_z - 0.02]
+                if vg_head and below_skull:
+                    vg_head.remove(below_skull)
+                    
+                # 2. DEF-neck strictly limited to neck cylinder (|X - center_x| < 0.065 and Z >= n_head_z - 0.015) - never touches shoulders
+                non_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015 or abs((mw @ v.co).x - center_x) > 0.065]
+                if vg_neck and non_neck:
+                    vg_neck.remove(non_neck)
+                    
+                # 3. DEF-jaw strictly limited to lower chin/mandible
+                if jaw_pb and vg_jaw:
+                    j_head_z = (rig_obj.matrix_world @ jaw_pb.head).z
+                    j_head_y = (rig_obj.matrix_world @ jaw_pb.head).y
+                    not_jaw = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < j_head_z - 0.035 or (mw @ v.co).y < j_head_y - 0.04]
+                    if not_jaw:
+                        vg_jaw.remove(not_jaw)
+                        # Throat vertices belong to head
+                        if vg_head:
+                            for vi in not_jaw:
+                                if (mw @ mesh_obj.data.vertices[vi].co).z >= h_head_z:
+                                    vg_head.add([vi], 0.9, 'ADD')
+                                    
         if log_file:
             log_file.write(f"Completed clean limb bleed isolation on mesh '{mesh_obj.name}'.\n")
     except Exception as e:
