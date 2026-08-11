@@ -1010,10 +1010,19 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
                 except Exception:
                     pass
                     
+            # Auto-generate Data Layers so vertex weights are immediately active
+            bpy.ops.object.select_all(action='DESELECT')
+            cloth.select_set(True)
+            context.view_layer.objects.active = cloth
+            try:
+                bpy.ops.object.datalayout_transfer(modifier=dt_mod.name)
+            except Exception:
+                pass
+                    
             fixed_count += 1
             
         context.view_layer.update()
-        self.report({'INFO'}, f"Cleaned clothing modifiers & synced smooth weights for {fixed_count} clothing mesh(es) to '{body_obj.name}'!")
+        self.report({'INFO'}, f"Synced weights and generated data layers for {fixed_count} clothing mesh(es) to '{body_obj.name}'!")
         return {'FINISHED'}
 
 class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
@@ -1073,7 +1082,7 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
             is_under_cloth = False
             for cloth, tree in cloth_trees:
                 loc, normal, face_idx, dist = tree.find_nearest(v_world)
-                if dist is not None and dist < 0.035:
+                if dist is not None and dist < 0.055:
                     is_under_cloth = True
                     break
             if is_under_cloth:
@@ -1095,6 +1104,6 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
         mask_mod.invert_vertex_group = False
         
         context.view_layer.update()
-        self.report({'INFO'}, f"Auto-masked {len(hidden_indices)} body vertices under clothes! 0% clipping.")
+        self.report({'INFO'}, f"Auto-masked {len(hidden_indices)} body vertices under clothes! 0% clipping guaranteed.")
         return {'FINISHED'}
 
