@@ -72,7 +72,17 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                 if vg_toe and shin_verts:
                     vg_toe.remove(shin_verts)
                     
-        # 3. Arm & Wrist Solid Joint Isolation (solid wrists, arms never pull chest)
+        # 3. Arm, Forearm & Hand Complete Isolation from Spine & Torso
+        # Spine (DEF-spine.001/.002/.003) must NEVER have weights on arms, forearms, or hands!
+        arm_verts_L = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x > 0.18] if left_is_positive_x else [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x < -0.18]
+        arm_verts_R = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x < -0.18] if left_is_positive_x else [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x > 0.18]
+        all_arm_verts = arm_verts_L + arm_verts_R
+        
+        for sp_name in ["DEF-spine", "DEF-spine.001", "DEF-spine.002", "DEF-spine.003", "DEF-pelvis"]:
+            sp_vg = mesh_obj.vertex_groups.get(sp_name)
+            if sp_vg and all_arm_verts:
+                sp_vg.remove(all_arm_verts)
+                
         for side in [".L", ".R"]:
             uarm_pb = rig_obj.pose.bones.get(f"DEF-upper_arm{side}")
             sh_pb = rig_obj.pose.bones.get(f"DEF-shoulder{side}")
@@ -83,152 +93,116 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
             vg_sh = mesh_obj.vertex_groups.get(f"DEF-shoulder{side}")
             vg_farm = mesh_obj.vertex_groups.get(f"DEF-forearm{side}")
             vg_hand = mesh_obj.vertex_groups.get(f"DEF-hand{side}")
-            vg_chest = mesh_obj.vertex_groups.get("DEF-spine.003")
             
             is_left = (side == ".L" and left_is_positive_x) or (side == ".R" and not left_is_positive_x)
             
             if uarm_pb and vg_uarm:
                 sh_head = rig_obj.matrix_world @ uarm_pb.head
                 
-                # Check each vertex: if it is inside deep chest or deep ribcage, remove arm weights and transfer to chest
-                deep_chest_verts = []
+                # Torso vertices (inward of shoulder socket) must not have arm weights
+                torso_verts = []
                 for v in mesh_obj.data.vertices:
                     vw = mw @ v.co
                     inward_dist = (sh_head.x - vw.x) if is_left else (vw.x - sh_head.x)
-                    
-                    is_deep_chest = (inward_dist > 0.045)
-                    is_deep_ribs = (vw.z < sh_head.z - 0.08) and (inward_dist > 0.02)
-                    is_deep_back = (vw.y < sh_head.y - 0.04) and (inward_dist > 0.035)
-                    
-                    if is_deep_chest or is_deep_ribs or is_deep_back:
-                        deep_chest_verts.append(v.index)
+                    if inward_dist > 0.02: # Towards spine/chest
+                        torso_verts.append(v.index)
                         
-                if deep_chest_verts:
-                    vg_uarm.remove(deep_chest_verts)
-                    if vg_chest:
-                        for vi in deep_chest_verts:
-                            vg_chest.add([vi], 0.8, 'ADD')
-                            
-                # Strip forearm and hand from entire torso
-                center_torso = [v.index for v in mesh_obj.data.vertices if abs((mw @ v.co).x - center_x) < abs(sh_head.x - center_x) - 0.02]
-                if center_torso:
-                    if vg_farm:
-                        vg_farm.remove(center_torso)
-                    if vg_hand:
-                        vg_hand.remove(center_torso)
-                        
+                if torso_verts:
+                    vg_uarm.remove(torso_verts)
+                if vg_farm and torso_verts:
+                    vg_farm.remove(torso_verts)
+                if vg_hand and torso_verts:
+                    vg_hand.remove(torso_verts)
+                    
             # Solid Wrist Hinge: eliminate rubbery wrist joint stretching
             if hand_pb:
                 w_head = rig_obj.matrix_world @ hand_pb.head
-                # Vertices past the wrist joint (on the hand and fingers)
                 hand_verts = []
                 arm_verts = []
                 for v in mesh_obj.data.vertices:
                     vw_x = (mw @ v.co).x
                     dist_outward = (vw_x - w_head.x) if is_left else (w_head.x - vw_x)
-                    if dist_outward > 0.015:
+                    if dist_outward > 0.012:
                         hand_verts.append(v.index)
-                    elif dist_outward < -0.025:
+                    elif dist_outward < -0.020:
                         arm_verts.append(v.index)
                         
                 if vg_farm and hand_verts:
                     vg_farm.remove(hand_verts)
                 if vg_hand and arm_verts:
                     vg_hand.remove(arm_verts)
-                # Remove all finger groups from the forearm
                 for f_vg in mesh_obj.vertex_groups:
                     if side in f_vg.name and any(k in f_vg.name for k in ["thumb", "index", "middle", "ring", "pinky"]):
                         if arm_verts:
                             f_vg.remove(arm_verts)
                     
         # 4. Neck, Head & Jaw Anatomical Weighting (neck strictly decoupled from shoulders)
-        is_clothing = any(k in mesh_obj.name.lower() for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt", "pant", "paint", "short", "trouser", "jean", "boxer", "cloth"])
+        neck_pb = rig_obj.pose.bones.get("DEF-neck")
+        head_pb = rig_obj.pose.bones.get("DEF-head")
+        jaw_pb = rig_obj.pose.bones.get("DEF-jaw")
         
+        vg_neck = mesh_obj.vertex_groups.get("DEF-neck")
+        vg_head = mesh_obj.vertex_groups.get("DEF-head")
+        vg_jaw = mesh_obj.vertex_groups.get("DEF-jaw")
+        
+        # Strictly Decouple Neck & Head from Shoulders/Trapezius on ALL meshes (body and shirt)
+        if neck_pb:
+            n_head_z = (rig_obj.matrix_world @ neck_pb.head).z
+            
+            # Shoulder vertices (|X - center_x| > 0.055 and Z < n_head_z + 0.04) must NEVER have neck/head/jaw weights
+            shoulder_verts = [v.index for v in mesh_obj.data.vertices if abs((mw @ v.co).x - center_x) > 0.055 and (mw @ v.co).z < n_head_z + 0.04]
+            if shoulder_verts:
+                if vg_neck:
+                    vg_neck.remove(shoulder_verts)
+                if vg_head:
+                    vg_head.remove(shoulder_verts)
+                if vg_jaw:
+                    vg_jaw.remove(shoulder_verts)
+                    
+            # Below neck base belongs to chest/spine, NEVER neck/head/jaw
+            below_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015]
+            if below_neck:
+                if vg_neck:
+                    vg_neck.remove(below_neck)
+                if vg_head:
+                    vg_head.remove(below_neck)
+                if vg_jaw:
+                    vg_jaw.remove(below_neck)
+                    
+        is_clothing = any(k in mesh_obj.name.lower() for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt", "pant", "paint", "short", "trouser", "jean", "boxer", "cloth"])
         if is_clothing:
-            # Transfer collar weights from head to neck / spine.003 so collar moves with chest/neck in jumps
-            vg_head = mesh_obj.vertex_groups.get("DEF-head")
-            vg_neck = mesh_obj.vertex_groups.get("DEF-neck")
-            if not vg_neck:
-                vg_neck = mesh_obj.vertex_groups.new(name="DEF-neck")
+            # Transfer any remaining head/face weights on clothing to neck / spine.003
             vg_spine3 = mesh_obj.vertex_groups.get("DEF-spine.003")
             if vg_head:
                 for v in mesh_obj.data.vertices:
                     for g in v.groups:
                         if g.group == vg_head.index and g.weight > 0.001:
-                            vg_neck.add([v.index], g.weight, 'ADD')
-                            if vg_spine3:
-                                vg_spine3.add([v.index], g.weight * 0.5, 'ADD')
+                            if vg_neck:
+                                vg_neck.add([v.index], g.weight, 'ADD')
+                            elif vg_spine3:
+                                vg_spine3.add([v.index], g.weight, 'ADD')
                                 
-            # Clothing (shirt, pants) must NEVER be attached to head, eyes, jaw, or face detail bones!
+            # Purge all head/face/jaw/eye detail groups from clothing
             vgs_to_remove = [vg.name for vg in mesh_obj.vertex_groups if any(k in vg.name.lower() for k in ["head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face"])]
             for vgn in vgs_to_remove:
                 vg = mesh_obj.vertex_groups.get(vgn)
                 if vg:
                     mesh_obj.vertex_groups.remove(vg)
         else:
-            # On Body Mesh: Ensure neck/jaw/throat continuity & decouple from shoulders
-            neck_pb = rig_obj.pose.bones.get("DEF-neck")
-            head_pb = rig_obj.pose.bones.get("DEF-head")
-            jaw_pb = rig_obj.pose.bones.get("DEF-jaw")
-            
-            vg_neck = mesh_obj.vertex_groups.get("DEF-neck")
-            vg_head = mesh_obj.vertex_groups.get("DEF-head")
-            vg_jaw = mesh_obj.vertex_groups.get("DEF-jaw")
-            
-            if neck_pb and head_pb:
+            # On Body Mesh: Throat vertices transfer cleanly to DEF-head so no tearing occurs
+            if jaw_pb and vg_jaw and neck_pb:
+                j_head_z = (rig_obj.matrix_world @ jaw_pb.head).z
+                j_head_y = (rig_obj.matrix_world @ jaw_pb.head).y
                 n_head_z = (rig_obj.matrix_world @ neck_pb.head).z
-                h_head_z = (rig_obj.matrix_world @ head_pb.head).z
                 
-                # Below neck joint belongs to chest, NOT neck or head
-                below_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015]
-                if below_neck:
-                    if vg_neck:
-                        vg_neck.remove(below_neck)
+                not_jaw = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < j_head_z - 0.035 or (mw @ v.co).y < j_head_y - 0.04]
+                if not_jaw:
+                    vg_jaw.remove(not_jaw)
                     if vg_head:
-                        vg_head.remove(below_neck)
-                    if vg_jaw:
-                        vg_jaw.remove(below_neck)
-                        
-                # Decouple Neck from Shoulders/Trapezius (head rotation NEVER twitches the shoulders)
-                shoulder_verts_L = []
-                shoulder_verts_R = []
-                for v in mesh_obj.data.vertices:
-                    vw = mw @ v.co
-                    if vw.z < n_head_z + 0.06:
-                        if (vw.x - center_x) > 0.075 if left_is_positive_x else (vw.x - center_x) < -0.075:
-                            shoulder_verts_L.append(v.index)
-                        elif (vw.x - center_x) < -0.075 if left_is_positive_x else (vw.x - center_x) > 0.075:
-                            shoulder_verts_R.append(v.index)
-                            
-                if vg_neck:
-                    if shoulder_verts_L:
-                        vg_neck.remove(shoulder_verts_L)
-                    if shoulder_verts_R:
-                        vg_neck.remove(shoulder_verts_R)
-                if vg_head:
-                    if shoulder_verts_L:
-                        vg_head.remove(shoulder_verts_L)
-                    if shoulder_verts_R:
-                        vg_head.remove(shoulder_verts_R)
-                        
-                # Jaw strictly limited to movable mandible / chin; throat vertices transfer cleanly to DEF-head
-                if jaw_pb and vg_jaw:
-                    j_head_z = (rig_obj.matrix_world @ jaw_pb.head).z
-                    j_head_y = (rig_obj.matrix_world @ jaw_pb.head).y
-                    
-                    not_jaw = []
-                    for v in mesh_obj.data.vertices:
-                        vw = mw @ v.co
-                        if vw.z < j_head_z - 0.035 or vw.y < j_head_y - 0.04:
-                            not_jaw.append(v.index)
-                            
-                    if not_jaw:
-                        vg_jaw.remove(not_jaw)
-                        if vg_head:
-                            for vi in not_jaw:
-                                if (mw @ mesh_obj.data.vertices[vi].co).z >= n_head_z:
-                                    vg_head.add([vi], 1.0, 'ADD')
-                                    
+                        for vi in not_jaw:
+                            if (mw @ mesh_obj.data.vertices[vi].co).z >= n_head_z:
+                                vg_head.add([vi], 1.0, 'ADD')
+                                
         if log_file:
             log_file.write(f"Completed clean limb bleed isolation on mesh '{mesh_obj.name}'.\n")
     except Exception as e:
