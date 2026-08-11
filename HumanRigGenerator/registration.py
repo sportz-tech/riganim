@@ -39,7 +39,11 @@ from .operators.props import (
     OBJECT_OT_pick_prop_from_selection,
     get_prop_items
 )
-from .operators.auto_skin import OBJECT_OT_auto_skin_mesh
+from .operators.auto_skin import (
+    OBJECT_OT_auto_skin_mesh,
+    OBJECT_OT_fix_clothing_clipping,
+    OBJECT_OT_mask_body_under_clothes
+)
 from .operators.asset_spawner import (
     OBJECT_OT_interactive_asset_spawner,
     OBJECT_OT_scatter_selected_mesh,
@@ -243,6 +247,8 @@ classes = (
     OBJECT_OT_audio_lip_sync,
     OBJECT_OT_reset_pose_mixer,
     OBJECT_OT_auto_skin_mesh,
+    OBJECT_OT_fix_clothing_clipping,
+    OBJECT_OT_mask_body_under_clothes,
     OBJECT_OT_bind_camera_to_frame,
     OBJECT_OT_delete_timeline_marker,
     OBJECT_OT_setup_dialogue_cameras,

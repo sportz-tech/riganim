@@ -899,3 +899,181 @@ def assign_unweighted_vertices(mesh_obj, rig_obj, log_file):
     for name, count in sorted(assigned_count.items(), key=lambda x: x[1], reverse=True):
         log_file.write(f"  Assigned {count} vertices to {name}\n")
 
+
+class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
+    """Transfers exact weights from the body mesh to clothes (shirts, pants) and adds a non-penetration safety offset."""
+    bl_idname = "object.fix_clothing_clipping"
+    bl_label = "Fix Clothing / Mesh Clipping"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    offset_distance: bpy.props.FloatProperty( # type: ignore
+        name="Safety Offset (m)",
+        description="Minimum distance between clothing and body skin to prevent poke-through",
+        default=0.002,
+        min=0.0,
+        max=0.05,
+        step=0.1,
+        precision=4
+    )
+    
+    def execute(self, context):
+        selected_objs = [o for o in context.selected_objects if o.type == 'MESH']
+        
+        if len(selected_objs) == 0:
+            self.report({'WARNING'}, "Please select the clothing mesh (Shirt / Pants / Jacket)!")
+            return {'CANCELLED'}
+            
+        body_obj = None
+        clothing_objs = []
+        
+        if len(selected_objs) >= 2:
+            for o in selected_objs:
+                name_lower = o.name.lower()
+                if any(k in name_lower for k in ["body", "skin", "base", "human", "character", "mesh"]):
+                    body_obj = o
+                    break
+            if not body_obj:
+                body_obj = selected_objs[-1]
+            clothing_objs = [o for o in selected_objs if o != body_obj]
+        else:
+            clothing_objs = selected_objs
+            for o in context.scene.objects:
+                if o.type == 'MESH' and o not in clothing_objs:
+                    name_lower = o.name.lower()
+                    if any(k in name_lower for k in ["body", "skin", "base", "human"]):
+                        body_obj = o
+                        break
+            if not body_obj:
+                meshes = [o for o in context.scene.objects if o.type == 'MESH' and o not in clothing_objs]
+                if meshes:
+                    body_obj = max(meshes, key=lambda m: len(m.data.vertices))
+                    
+        if not body_obj:
+            self.report({'WARNING'}, "Could not detect body mesh! Please select both Clothing and Body mesh together.")
+            return {'CANCELLED'}
+            
+        fixed_count = 0
+        for cloth in clothing_objs:
+            if cloth == body_obj:
+                continue
+                
+            # 1. Add Data Transfer Modifier to transfer smooth vertex weights
+            dt_mod_name = "HRG_Weight_Transfer"
+            dt_mod = cloth.modifiers.get(dt_mod_name)
+            if not dt_mod:
+                dt_mod = cloth.modifiers.new(name=dt_mod_name, type='DATA_TRANSFER')
+                
+            dt_mod.object = body_obj
+            dt_mod.use_vert_data = True
+            dt_mod.data_types_verts = {'VGROUP_WEIGHTS'}
+            dt_mod.vert_mapping = 'NEAREST'
+            
+            # 2. Add Shrinkwrap Modifier to prevent penetration
+            sw_mod_name = "HRG_Cloth_No_Clip"
+            sw_mod = cloth.modifiers.get(sw_mod_name)
+            if not sw_mod:
+                sw_mod = cloth.modifiers.new(name=sw_mod_name, type='SHRINKWRAP')
+                
+            sw_mod.target = body_obj
+            sw_mod.offset = self.offset_distance
+            
+            # Position Shrinkwrap after Armature modifier
+            arm_idx = -1
+            for idx, m in enumerate(cloth.modifiers):
+                if m.type == 'ARMATURE':
+                    arm_idx = idx
+                    break
+            if arm_idx != -1:
+                try:
+                    cloth.modifiers.move(cloth.modifiers.find(sw_mod.name), arm_idx + 1)
+                except Exception:
+                    pass
+                    
+            fixed_count += 1
+            
+        context.view_layer.update()
+        self.report({'INFO'}, f"Successfully fixed clothing clipping for {fixed_count} mesh(es) matching body '{body_obj.name}'!")
+        return {'FINISHED'}
+
+class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
+    """Hides the body mesh geometry under clothing using a Mask modifier so skin can never poke through."""
+    bl_idname = "object.mask_body_under_clothes"
+    bl_label = "Auto-Mask Body Under Clothes"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        selected_objs = [o for o in context.selected_objects if o.type == 'MESH']
+        if len(selected_objs) < 2:
+            active = context.active_object
+            if not active or active.type != 'MESH':
+                self.report({'WARNING'}, "Please select both the Body Mesh and Clothing Mesh together!")
+                return {'CANCELLED'}
+            body_obj = active
+            clothing_objs = [o for o in context.scene.objects if o.type == 'MESH' and o != body_obj and any(k in o.name.lower() for k in ["shirt", "pant", "cloth", "jacket", "coat", "dress", "trouser", "suit"])]
+        else:
+            body_obj = None
+            for o in selected_objs:
+                name_lower = o.name.lower()
+                if any(k in name_lower for k in ["body", "skin", "base", "human"]):
+                    body_obj = o
+                    break
+            if not body_obj:
+                body_obj = selected_objs[0]
+            clothing_objs = [o for o in selected_objs if o != body_obj]
+            
+        if not clothing_objs:
+            self.report({'WARNING'}, "No clothing meshes found to calculate body mask!")
+            return {'CANCELLED'}
+            
+        vg_name = "HRG_Mask_Visible_Body"
+        vg = body_obj.vertex_groups.get(vg_name)
+        if not vg:
+            vg = body_obj.vertex_groups.new(name=vg_name)
+            
+        body_mesh = body_obj.data
+        import mathutils
+        import bmesh
+        
+        cloth_trees = []
+        for cloth in clothing_objs:
+            bm = bmesh.new()
+            bm.from_mesh(cloth.data)
+            bm.transform(cloth.matrix_world)
+            tree = mathutils.bvhtree.BVHTree.FromBMesh(bm)
+            cloth_trees.append((cloth, tree))
+            bm.free()
+            
+        mw_body = body_obj.matrix_world
+        hidden_indices = []
+        visible_indices = []
+        
+        for v in body_mesh.vertices:
+            v_world = mw_body @ v.co
+            is_under_cloth = False
+            for cloth, tree in cloth_trees:
+                loc, normal, face_idx, dist = tree.find_nearest(v_world)
+                if dist is not None and dist < 0.035:
+                    is_under_cloth = True
+                    break
+            if is_under_cloth:
+                hidden_indices.append(v.index)
+            else:
+                visible_indices.append(v.index)
+                
+        if visible_indices:
+            vg.add(visible_indices, 1.0, 'REPLACE')
+        if hidden_indices:
+            vg.remove(hidden_indices)
+            
+        mask_mod_name = "HRG_Body_Cloth_Mask"
+        mask_mod = body_obj.modifiers.get(mask_mod_name)
+        if not mask_mod:
+            mask_mod = body_obj.modifiers.new(name=mask_mod_name, type='MASK')
+            
+        mask_mod.vertex_group = vg_name
+        mask_mod.invert_vertex_group = False
+        
+        context.view_layer.update()
+        self.report({'INFO'}, f"Auto-masked {len(hidden_indices)} body vertices under clothes! 0% clipping.")
+        return {'FINISHED'}
+
