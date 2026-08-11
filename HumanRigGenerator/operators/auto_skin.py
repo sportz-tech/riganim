@@ -145,25 +145,39 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
         vg_head = mesh_obj.vertex_groups.get("DEF-head")
         vg_jaw = mesh_obj.vertex_groups.get("DEF-jaw")
         
-        is_clothing = any(k in mesh_obj.name.lower() for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt", "pant", "paint", "short", "trouser", "jean", "boxer", "cloth"])
-        if is_clothing:
-            # Transfer head weights on clothing to DEF-neck / DEF-spine.003 so shirt stays attached in Jump
-            vg_spine3 = mesh_obj.vertex_groups.get("DEF-spine.003")
-            if vg_head:
-                for v in mesh_obj.data.vertices:
-                    for g in v.groups:
-                        if g.group == vg_head.index and g.weight > 0.001:
-                            if vg_neck:
-                                vg_neck.add([v.index], g.weight, 'ADD')
-                            elif vg_spine3:
-                                vg_spine3.add([v.index], g.weight, 'ADD')
-                                
-            # Purge head, jaw, face, eye detail groups from clothing
-            vgs_to_remove = [vg.name for vg in mesh_obj.vertex_groups if any(k in vg.name.lower() for k in ["head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face"])]
-            for vgn in vgs_to_remove:
-                vg = mesh_obj.vertex_groups.get(vgn)
-                if vg:
+        # Check if mesh is clothing
+        is_upper_clothing = any(k in mesh_obj.name.lower() for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt", "hoodie", "sweater", "bra", "chest"])
+        is_lower_clothing = any(k in mesh_obj.name.lower() for k in ["pant", "paint", "short", "trouser", "jean", "boxer", "skirt", "bottom", "underwear", "brief", "leg"])
+        
+        if is_upper_clothing:
+            # Upper clothing (shirt/jacket): ONLY torso/arms/neck bones
+            # Strip all pelvis, leg, foot, hand/finger, head, face, jaw, mouth groups so shirt doesn't over-stretch in jumps/poses
+            forbidden_upper = ["pelvis", "thigh", "shin", "foot", "toe", "leg", "knee", "ankle", "hand", "thumb", "index", "middle", "ring", "pinky", "head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face", "mouth"]
+            for vg in list(mesh_obj.vertex_groups):
+                if any(k in vg.name.lower() for k in forbidden_upper):
                     mesh_obj.vertex_groups.remove(vg)
+            
+            # Normalize remaining weights per vertex for calm, smooth motion
+            for v in mesh_obj.data.vertices:
+                total_w = sum(g.weight for g in v.groups)
+                if total_w > 0.0001:
+                    for g in v.groups:
+                        g.weight /= total_w
+
+        elif is_lower_clothing:
+            # Lower clothing (pants/shorts): ONLY pelvis and leg bones
+            # Strip upper spine, neck, head, shoulder, arm, hand, face, breast groups so pants don't stretch with upper body
+            forbidden_lower = ["spine", "neck", "head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face", "mouth", "shoulder", "arm", "hand", "thumb", "index", "middle", "ring", "pinky", "breast"]
+            for vg in list(mesh_obj.vertex_groups):
+                if any(k in vg.name.lower() for k in forbidden_lower):
+                    mesh_obj.vertex_groups.remove(vg)
+                    
+            # Normalize remaining weights per vertex for calm, smooth motion
+            for v in mesh_obj.data.vertices:
+                total_w = sum(g.weight for g in v.groups)
+                if total_w > 0.0001:
+                    for g in v.groups:
+                        g.weight /= total_w
         else:
             # On Body Mesh:
             if neck_pb and head_pb:
@@ -490,7 +504,7 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                 
                 # 2. Surgical Cleanup
                 for mod in list(mesh_obj.modifiers):
-                    if mod.type == 'ARMATURE':
+                    if mod.type in ['ARMATURE', 'DATA_TRANSFER', 'SHRINKWRAP'] or "HRG_" in mod.name or "Cloth_" in mod.name:
                         mesh_obj.modifiers.remove(mod)
                         
                 bone_names = {b.name for b in rig_obj.data.bones}
@@ -1175,6 +1189,10 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
                 if m.type in ['SHRINKWRAP', 'DATA_TRANSFER', 'MASK'] or "Cloth_No_Clip" in m.name or "HRG_" in m.name:
                     cloth.modifiers.remove(m)
                     
+            # Clear old vertex groups from clothing before baking to avoid leftover bone groups
+            for vg in list(cloth.vertex_groups):
+                cloth.vertex_groups.remove(vg)
+                    
             # 2. Add Data Transfer Modifier and bake in Rest Pose
             dt_mod = cloth.modifiers.new(name="HRG_Weight_Bake", type='DATA_TRANSFER')
             dt_mod.object = body_obj
@@ -1200,7 +1218,11 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
                 pass
                 
             try:
-                bpy.ops.object.modifier_apply(modifier=dt_mod.name)
+                if hasattr(context, "temp_override"):
+                    with context.temp_override(active_object=cloth, selected_objects=[cloth]):
+                        bpy.ops.object.modifier_apply(modifier=dt_mod.name)
+                else:
+                    bpy.ops.object.modifier_apply(modifier=dt_mod.name)
             except Exception:
                 pass
                 
