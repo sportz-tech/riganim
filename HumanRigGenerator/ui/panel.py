@@ -203,11 +203,6 @@ class VIEW3D_PT_human_rig_generator(bpy.types.Panel):
             col = box.column(align=True)
             col.prop(scene, "hrg_rig_type", text="Rig Type")
             col.operator("object.generate_human_rig", text="Generate Rig (Auto-Skin & Bind)", icon='ARMATURE_DATA')
-            
-            # Clothing & Mesh Clipping Fix Tools (Optional adjustments)
-            row_cloth = col.row(align=True)
-            row_cloth.operator("object.fix_clothing_clipping", text="Sync Clothes Weights", icon='MOD_DATA_TRANSFER')
-            row_cloth.operator("object.mask_body_under_clothes", text="Auto-Mask Body", icon='MOD_MASK')
         
         # 3. Animation Presets (visible when rig is selected)
         if obj and obj.type == 'ARMATURE':
