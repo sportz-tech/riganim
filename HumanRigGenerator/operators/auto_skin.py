@@ -674,22 +674,36 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                 except Exception as e_sym:
                     log_file.write(f"Symmetrical cleanup failed: {e_sym}\n")
                     
-                # Spine and Pelvis weight de-pinching
+                # Thigh, Spine and Pelvis weight de-pinching & isolation
                 try:
                     pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
                     spine_pb = rig_obj.pose.bones.get("DEF-spine")
-                    if pelvis_pb and spine_pb:
+                    l_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.L")
+                    r_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.R")
+                    
+                    mw = mesh_obj.matrix_world
+                    if pelvis_pb:
                         p_head_z = (rig_obj.matrix_world @ pelvis_pb.head).z
                         vg_pelvis = mesh_obj.vertex_groups.get("DEF-pelvis")
                         if vg_pelvis:
-                            mw = mesh_obj.matrix_world
-                            # Clear DEF-pelvis from upper waist / abdomen above pelvis head + 0.025
-                            upper_waist = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > p_head_z + 0.025]
+                            # Clear DEF-pelvis from upper waist / abdomen above pelvis head + 0.015
+                            upper_waist = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > p_head_z + 0.015]
                             if upper_waist:
                                 vg_pelvis.remove(upper_waist)
-                                log_file.write(f"Removed DEF-pelvis bleed from {len(upper_waist)} upper waist vertices to prevent twisting/pinching.\n")
+                                log_file.write(f"Removed DEF-pelvis bleed from {len(upper_waist)} upper waist vertices.\n")
+                                
+                    # Clamp Thigh bones so moving legs NEVER pulls or twists the waist/spine
+                    for side, pb in [(".L", l_thigh_pb), (".R", r_thigh_pb)]:
+                        vg_thigh = mesh_obj.vertex_groups.get(f"DEF-thigh{side}")
+                        if pb and vg_thigh:
+                            t_head_z = (rig_obj.matrix_world @ pb.head).z
+                            # Vertices above thigh hip joint belong to pelvis/spine, NOT thigh
+                            above_hip = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > t_head_z + 0.01]
+                            if above_hip:
+                                vg_thigh.remove(above_hip)
+                                log_file.write(f"Removed DEF-thigh{side} bleed from {len(above_hip)} waist/spine vertices.\n")
                 except Exception as e_spine:
-                    log_file.write(f"Spine de-pinching failed: {e_spine}\n")
+                    log_file.write(f"Spine/Thigh de-pinching failed: {e_spine}\n")
                     
                 # Foot and Toe weight cleanup
                 try:
@@ -968,15 +982,15 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
                 body_obj = selected_objs[-1]
             clothing_objs = [o for o in selected_objs if o != body_obj]
         else:
-            clothing_objs = selected_objs
+            clothing_objs = [o for o in selected_objs if not o.name.startswith("Wgt_")]
             for o in context.scene.objects:
-                if o.type == 'MESH' and o not in clothing_objs:
+                if o.type == 'MESH' and o not in clothing_objs and not o.name.startswith("Wgt_"):
                     name_lower = o.name.lower()
                     if any(k in name_lower for k in ["body", "skin", "base", "human"]):
                         body_obj = o
                         break
             if not body_obj:
-                meshes = [o for o in context.scene.objects if o.type == 'MESH' and o not in clothing_objs]
+                meshes = [o for o in context.scene.objects if o.type == 'MESH' and o not in clothing_objs and not o.name.startswith("Wgt_")]
                 if meshes:
                     body_obj = max(meshes, key=lambda m: len(m.data.vertices))
                     
