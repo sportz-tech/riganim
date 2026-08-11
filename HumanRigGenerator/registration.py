@@ -14,10 +14,15 @@ from .operators.animation import (
     OBJECT_OT_bind_camera_to_frame, OBJECT_OT_delete_timeline_marker,
     OBJECT_OT_setup_dialogue_cameras, OBJECT_OT_setup_auto_lighting,
     OBJECT_OT_apply_face_expression, OBJECT_OT_apply_body_pose,
-    OBJECT_OT_delete_active_action, OBJECT_OT_purge_unused_actions,
+    OBJECT_OT_delete_active_action, OBJECT_OT_delete_selected_action, OBJECT_OT_purge_unused_actions,
     OBJECT_OT_smooth_fcurves, OBJECT_OT_scale_animation_timing,
     OBJECT_OT_clone_character_actor, OBJECT_OT_reset_rig_to_origin,
-    OBJECT_OT_delete_character_actor, OBJECT_OT_purge_unused_collections
+    OBJECT_OT_delete_character_actor, OBJECT_OT_purge_unused_collections,
+    OBJECT_OT_apply_saved_action, OBJECT_OT_copy_animation_from_actor,
+    OBJECT_OT_save_custom_action, OBJECT_OT_import_actions_from_blend, get_scene_actions_items,
+    OBJECT_OT_pick_anim_source_rig, OBJECT_OT_pick_anim_target_rig,
+    OBJECT_OT_transfer_actor_animation, get_transfer_action_items,
+    OBJECT_OT_fix_clone_constraints
 )
 from .operators.spawn_points import (
     OBJECT_OT_interactive_spawn_point_place,
@@ -31,9 +36,17 @@ from .operators.props import (
     OBJECT_OT_keyframe_prop_pickup,
     OBJECT_OT_keyframe_prop_drop,
     OBJECT_OT_detach_prop,
+    OBJECT_OT_pick_prop_from_selection,
     get_prop_items
 )
 from .operators.auto_skin import OBJECT_OT_auto_skin_mesh
+from .operators.asset_spawner import (
+    OBJECT_OT_interactive_asset_spawner,
+    OBJECT_OT_scatter_selected_mesh,
+    OBJECT_OT_spawn_mesh_at_cursor,
+    OBJECT_OT_clear_spawned_assets,
+    OBJECT_OT_import_assets_from_blend
+)
 from .ui.panel import VIEW3D_PT_human_rig_generator
 
 def get_action_fcurves(action):
@@ -237,6 +250,7 @@ classes = (
     OBJECT_OT_apply_face_expression,
     OBJECT_OT_apply_body_pose,
     OBJECT_OT_delete_active_action,
+    OBJECT_OT_delete_selected_action,
     OBJECT_OT_purge_unused_actions,
     OBJECT_OT_smooth_fcurves,
     OBJECT_OT_scale_animation_timing,
@@ -244,6 +258,14 @@ classes = (
     OBJECT_OT_reset_rig_to_origin,
     OBJECT_OT_delete_character_actor,
     OBJECT_OT_purge_unused_collections,
+    OBJECT_OT_apply_saved_action,
+    OBJECT_OT_copy_animation_from_actor,
+    OBJECT_OT_save_custom_action,
+    OBJECT_OT_import_actions_from_blend,
+    OBJECT_OT_pick_anim_source_rig,
+    OBJECT_OT_pick_anim_target_rig,
+    OBJECT_OT_transfer_actor_animation,
+    OBJECT_OT_fix_clone_constraints,
     OBJECT_OT_interactive_spawn_point_place,
     OBJECT_OT_add_spawn_point_at_cursor,
     OBJECT_OT_clone_to_spawn_points,
@@ -253,6 +275,12 @@ classes = (
     OBJECT_OT_keyframe_prop_pickup,
     OBJECT_OT_keyframe_prop_drop,
     OBJECT_OT_detach_prop,
+    OBJECT_OT_pick_prop_from_selection,
+    OBJECT_OT_interactive_asset_spawner,
+    OBJECT_OT_scatter_selected_mesh,
+    OBJECT_OT_spawn_mesh_at_cursor,
+    OBJECT_OT_clear_spawned_assets,
+    OBJECT_OT_import_assets_from_blend,
     VIEW3D_PT_human_rig_generator,
 )
 
@@ -273,6 +301,7 @@ def register():
     # Collapsible UI section state toggles
     bpy.types.Scene.hrg_show_actor = bpy.props.BoolProperty(name="Show Actor Manager", default=True)
     bpy.types.Scene.hrg_clone_count = bpy.props.IntProperty(name="Clone Count", default=2, min=1, max=20)
+    bpy.types.Scene.hrg_show_asset_spawner = bpy.props.BoolProperty(name="Show Asset & Mesh Spawner", default=True)
     bpy.types.Scene.hrg_show_markers = bpy.props.BoolProperty(name="Show Marker Alignment", default=False)
     bpy.types.Scene.hrg_show_generator = bpy.props.BoolProperty(name="Show Generator Options", default=True)
     bpy.types.Scene.hrg_show_sequencer = bpy.props.BoolProperty(name="Show Animation Sequencer", default=True)
@@ -352,6 +381,36 @@ def register():
             ('PROP_JUMP_CROSS', "Prop Jump & Cross", "Holding prop crouch, explosive vault jump across obstacle and solid land")
         ],
         default='WALK'
+    )
+    bpy.types.Scene.hrg_scene_action = bpy.props.EnumProperty(
+        name="Saved Action",
+        description="Select any saved Action from the blend file to apply to the active character",
+        items=get_scene_actions_items
+    )
+    bpy.types.Scene.hrg_anim_source_rig = bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        name="Source Rig",
+        description="Pick the source character rig using dropdown or eyedropper pen"
+    )
+    bpy.types.Scene.hrg_anim_target_rig = bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        name="Target Rig",
+        description="Pick the target character rig / clone using dropdown or eyedropper pen"
+    )
+    bpy.types.Scene.hrg_anim_transfer_action = bpy.props.EnumProperty(
+        name="Action to Transfer",
+        description="Select which action to transfer from source character to target character",
+        items=get_transfer_action_items
+    )
+    bpy.types.Scene.hrg_anim_make_copy = bpy.props.BoolProperty(
+        name="Create New Action Copy",
+        description="If checked, creates a new unique action copy. If unchecked, directly shares the exact same action data",
+        default=False
+    )
+    bpy.types.Scene.hrg_source_actor_to_copy = bpy.props.EnumProperty(
+        name="Source Actor",
+        description="Select source character to copy animation from",
+        items=get_actors_items
     )
     bpy.types.Scene.hrg_start_frame = bpy.props.IntProperty(
         name="Start Frame",
@@ -565,30 +624,97 @@ def register():
         default='ANIMATE'
     )
     
+    # Asset & Mesh Spawner Properties
+    bpy.types.Scene.hrg_spawn_source_obj = bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        name="Target Mesh / Object",
+        description="Select a specific object to spawn (or leave blank to use currently selected viewport object)"
+    )
+    bpy.types.Scene.hrg_mesh_spawn_count = bpy.props.IntProperty(
+        name="Spawn Count",
+        description="Number of objects/meshes to spawn (e.g. 1, 2, 3, etc.)",
+        default=3,
+        min=1,
+        max=500
+    )
+    bpy.types.Scene.hrg_mesh_spawn_radius = bpy.props.FloatProperty(
+        name="Scatter Radius",
+        description="Radius around click or 3D cursor to scatter multiple objects (in meters)",
+        default=5.0,
+        min=0.1,
+        max=100.0
+    )
+    bpy.types.Scene.hrg_mesh_random_rot = bpy.props.BoolProperty(
+        name="Random Z Rotation",
+        description="Randomly rotate objects on the Z-axis (0-360°) so they look natural",
+        default=True
+    )
+    bpy.types.Scene.hrg_mesh_random_scale = bpy.props.BoolProperty(
+        name="Random Scale",
+        description="Apply random scale variation between Min and Max",
+        default=True
+    )
+    bpy.types.Scene.hrg_mesh_scale_min = bpy.props.FloatProperty(
+        name="Scale Min",
+        description="Minimum scale factor",
+        default=0.8,
+        min=0.01,
+        max=10.0
+    )
+    bpy.types.Scene.hrg_mesh_scale_max = bpy.props.FloatProperty(
+        name="Scale Max",
+        description="Maximum scale factor",
+        default=1.2,
+        min=0.01,
+        max=10.0
+    )
+    bpy.types.Scene.hrg_mesh_align_normal = bpy.props.BoolProperty(
+        name="Align to Surface Normal",
+        description="Orient object Z-axis to match ground/terrain slope (great for rocks/props; turn off for upright trees/houses)",
+        default=False
+    )
+    bpy.types.Scene.hrg_mesh_z_offset = bpy.props.FloatProperty(
+        name="Ground Z-Offset",
+        description="Vertical elevation offset from ground surface",
+        default=0.0
+    )
+    bpy.types.Scene.hrg_mesh_link_dups = bpy.props.BoolProperty(
+        name="Linked Duplicate (Alt+D)",
+        description="Share mesh data between instances to optimize viewport memory",
+        default=False
+    )
+
     # Prop Quick-Attacher Properties
     bpy.types.Scene.hrg_show_props = bpy.props.BoolProperty(
         name="Show Prop Manager",
         default=True
     )
+    bpy.types.Scene.hrg_prop_source_obj = bpy.props.PointerProperty(
+        type=bpy.types.Object,
+        name="Prop / Rig Object",
+        description="Select prop object or armature rig (using dropdown, viewport click, or eyedropper pen)"
+    )
     bpy.types.Scene.hrg_prop_object = bpy.props.EnumProperty(
-        name="Prop Object",
-        description="Select prop (Rope, Dog, Phone, Tool) to attach",
+        name="Prop Object / Rig",
+        description="Select prop object or armature rig (Weapon, Pet, Tool, Phone) to attach",
         items=get_prop_items
     )
     bpy.types.Scene.hrg_prop_target_actor = bpy.props.EnumProperty(
         name="Target Actor",
-        description="Character who will hold the prop",
+        description="Character who will hold the prop or rig",
         items=get_actors_items
     )
     bpy.types.Scene.hrg_prop_slot = bpy.props.EnumProperty(
         name="Attach Slot",
-        description="Body part to attach prop to",
+        description="Body part to attach prop or rig to",
         items=[
             ('RIGHT_HAND', "Right Hand", "Attach prop to Right Hand palm"),
             ('LEFT_HAND', "Left Hand", "Attach prop to Left Hand palm"),
             ('HEAD', "Head (Hat / Glasses)", "Attach prop to Head"),
-            ('CHEST', "Chest / Back (Backpack)", "Attach prop to Chest/Back"),
-            ('PELVIS', "Pelvis / Belt (Holster)", "Attach prop to Belt")
+            ('CHEST', "Chest / Back (Backpack / Weapon Sheath)", "Attach prop to Chest/Back"),
+            ('PELVIS', "Pelvis / Belt (Holster)", "Attach prop to Belt"),
+            ('RIGHT_FOOT', "Right Foot (Shoes / Skates)", "Attach prop to Right Foot"),
+            ('LEFT_FOOT', "Left Foot (Shoes / Skates)", "Attach prop to Left Foot")
         ],
         default='RIGHT_HAND'
     )
@@ -858,7 +984,14 @@ def unregister():
         "hrg_cam_shot", "hrg_cam_angle", "hrg_cam_orbit", "hrg_cam_follow", 
         "hrg_cam_target_actor", "hrg_active_camera", "hrg_light_mood",
         "hrg_dial_actor_a", "hrg_dial_actor_b", "hrg_active_pose_selector",
-        "hrg_marker_size", "hrg_show_marker_names", "hrg_show_marker_lines"
+        "hrg_marker_size", "hrg_show_marker_names", "hrg_show_marker_lines",
+        "hrg_show_asset_spawner", "hrg_spawn_source_obj", "hrg_mesh_spawn_count",
+        "hrg_mesh_spawn_radius", "hrg_mesh_random_rot", "hrg_mesh_random_scale",
+        "hrg_mesh_scale_min", "hrg_mesh_scale_max", "hrg_mesh_align_normal",
+        "hrg_mesh_z_offset", "hrg_mesh_link_dups",
+        "hrg_show_props", "hrg_prop_source_obj", "hrg_prop_object", "hrg_prop_target_actor", "hrg_prop_slot",
+        "hrg_scene_action", "hrg_source_actor_to_copy",
+        "hrg_anim_source_rig", "hrg_anim_target_rig", "hrg_anim_transfer_action", "hrg_anim_make_copy"
     ]:
         try:
             delattr(bpy.types.Scene, prop)

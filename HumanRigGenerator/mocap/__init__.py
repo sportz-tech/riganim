@@ -1,0 +1,43 @@
+# __init__.py
+import sys
+import site
+
+# Ensure Blender searches user site-packages where pip --user installs files
+user_site = site.getusersitepackages()
+if user_site not in sys.path:
+    sys.path.append(user_site)
+
+
+bl_info = {
+    "name": "RigAnim Mocap: AI Motion Capture & Transfer",
+    "author": "Antigravity",
+    "version": (2, 0, 0),
+    "blender": (4, 0, 0),
+    "location": "View3D > Sidebar > RigAnim Studio",
+    "description": "Captures facial expressions, eye tracking, finger gestures, and full body motion from live webcam or video files using OpenCV and MediaPipe.",
+    "category": "Animation",
+}
+
+# Support recursive reloading for developer convenience
+if "dependency_installer" in locals():
+    import importlib
+    importlib.reload(dependency_installer)
+    importlib.reload(mocap_processor)
+    importlib.reload(ui_panel)
+else:
+    from . import dependency_installer
+    from . import mocap_processor
+    from . import ui_panel
+
+def register():
+    dependency_installer.register()
+    mocap_processor.register()
+    ui_panel.register()
+
+def unregister():
+    dependency_installer.unregister()
+    mocap_processor.unregister()
+    ui_panel.unregister()
+
+if __name__ == "__main__":
+    register()

@@ -9,12 +9,12 @@ if user_site not in sys.path:
 
 
 bl_info = {
-    "name": "Motion Capture & Transfer",
+    "name": "RigAnim Mocap: AI Motion Capture & Transfer",
     "author": "Antigravity",
-    "version": (1, 0, 0),
+    "version": (2, 0, 0),
     "blender": (4, 0, 0),
-    "location": "View3D > Sidebar > Human Rig",
-    "description": "Captures facial and body motion (live camera or pre-recorded video) using OpenCV and MediaPipe and transfers it to the HumanRigGenerator armature.",
+    "location": "View3D > Sidebar > RigAnim Studio",
+    "description": "Captures facial expressions, eye tracking, finger gestures, and full body motion from live webcam or video files using OpenCV and MediaPipe.",
     "category": "Animation",
 }
 

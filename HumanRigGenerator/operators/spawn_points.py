@@ -189,11 +189,34 @@ class OBJECT_OT_clone_to_spawn_points(bpy.types.Operator):
             if new_arm_obj.data:
                 new_arm_obj.data.name = f"{new_arm_name}_Data"
                 
-            # Create independent animation action
+            # Retarget all internal bone constraints and modifiers to the clone!
+            from .animation import retarget_rig_internal_constraints, get_action_fcurves, assign_action_to_rig
+            retarget_rig_internal_constraints(new_arm_obj, orig_armature)
+                
+            delta_loc = sp.location - orig_armature.location
+            # Create independent animation action copy or new action
             if not new_arm_obj.animation_data:
                 new_arm_obj.animation_data_create()
-            new_action = bpy.data.actions.new(f"{new_arm_name}_Action")
-            new_arm_obj.animation_data.action = new_action
+                
+            if orig_armature.animation_data and orig_armature.animation_data.action:
+                cloned_act = orig_armature.animation_data.action.copy()
+                cloned_act.name = f"{orig_armature.animation_data.action.name}{clone_suffix}"
+                cloned_act.use_fake_user = True
+                assign_action_to_rig(new_arm_obj, cloned_act)
+                
+                # Offset object location curves to match spawn point location
+                fcurves = get_action_fcurves(cloned_act)
+                for fc in fcurves:
+                    if fc.data_path == "location":
+                        axis = fc.array_index
+                        offset = delta_loc[axis]
+                        for kp in fc.keyframe_points:
+                            kp.co[1] += offset
+                            kp.handle_left[1] += offset
+                            kp.handle_right[1] += offset
+            else:
+                new_action = bpy.data.actions.new(f"{new_arm_name}_Action")
+                assign_action_to_rig(new_arm_obj, new_action)
             
             # Position character directly at spawn point
             new_arm_obj.location = sp.location.copy()

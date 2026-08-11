@@ -1,6 +1,7 @@
 import bpy
 import mathutils
 import math
+import os
 from bpy_extras.io_utils import ImportHelper
 from ..utils.naming import get_control_name
 
@@ -45,6 +46,37 @@ def remove_action_fcurve(action, fc):
                                         return
                                     except Exception:
                                         pass
+
+def assign_action_to_rig(arm_obj, action):
+    """
+    Assigns an action to an armature object, ensuring Blender 5.0+ Action Slots
+    are properly connected and active so the rig actually evaluates the animation.
+    """
+    if not arm_obj:
+        return
+    if not arm_obj.animation_data:
+        arm_obj.animation_data_create()
+        
+    arm_obj.animation_data.action = action
+    
+    # In Blender 5.0+ (Action Slots), ensure action_slot is assigned to an active slot
+    if hasattr(arm_obj.animation_data, "action_slot") and hasattr(action, "slots"):
+        if len(action.slots) > 0:
+            slot_found = None
+            for s in action.slots:
+                ident = getattr(s, "identifier", "")
+                if arm_obj.name in ident:
+                    slot_found = s
+                    break
+            if not slot_found:
+                slot_found = action.slots[0]
+            arm_obj.animation_data.action_slot = slot_found
+        elif hasattr(action.slots, "new"):
+            try:
+                new_slot = action.slots.new(name=arm_obj.name)
+                arm_obj.animation_data.action_slot = new_slot
+            except Exception:
+                pass
 
 # Frame length of loops
 PRESET_LENGTHS = {
@@ -2540,24 +2572,145 @@ class OBJECT_OT_delete_active_action(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
-        obj = context.active_object
-        if not obj or not obj.animation_data or not obj.animation_data.action:
-            self.report({'WARNING'}, "No active action found on selected object!")
+        scene = context.scene
+        action = None
+        
+        if context.active_object and context.active_object.animation_data and context.active_object.animation_data.action:
+            action = context.active_object.animation_data.action
+        elif getattr(scene, "hrg_scene_action", 'NONE') != 'NONE':
+            action = bpy.data.actions.get(scene.hrg_scene_action)
+        elif getattr(scene, "hrg_anim_transfer_action", 'ACTIVE') not in ['ACTIVE', 'NONE']:
+            action = bpy.data.actions.get(scene.hrg_anim_transfer_action)
+        elif len(bpy.data.actions) > 0:
+            action = bpy.data.actions[0]
+            
+        if not action:
+            self.report({'WARNING'}, "No actions found in the blend file to delete!")
             return {'CANCELLED'}
             
-        action = obj.animation_data.action
         action_name = action.name
         
-        # Clear fake user so it can be unlinked
+        # 1. Unlink action from all objects safely
+        for obj in bpy.data.objects:
+            if obj.animation_data and obj.animation_data.action == action:
+                try:
+                    obj.animation_data.action = None
+                except Exception:
+                    pass
+                    
+        # 2. Clear fake user so it can be unlinked
         action.use_fake_user = False
-        obj.animation_data.action = None
         
-        # Completely remove action from Blender's database
+        # 3. Completely remove action from Blender's database
         try:
             bpy.data.actions.remove(action, do_unlink=True)
-            self.report({'INFO'}, f"Permanently deleted Action '{action_name}' from Action Editor!")
+            self.report({'INFO'}, f"Permanently deleted Action '{action_name}' from blend file!")
         except Exception as e:
             self.report({'WARNING'}, f"Could not delete action: {e}")
+            return {'CANCELLED'}
+            
+        # 4. Auto-advance dropdown to next available action
+        remaining = [a.name for a in bpy.data.actions]
+        next_act = remaining[0] if remaining else 'NONE'
+        if getattr(scene, "hrg_scene_action", None) == action_name:
+            scene.hrg_scene_action = next_act
+        if getattr(scene, "hrg_anim_transfer_action", None) == action_name:
+            scene.hrg_anim_transfer_action = next_act if remaining else 'ACTIVE'
+            
+        return {'FINISHED'}
+
+class OBJECT_OT_delete_selected_action(bpy.types.Operator):
+    """Permanently deletes the selected Action from the blend file and unlinks it from all characters."""
+    bl_idname = "object.delete_selected_action"
+    bl_label = "Delete Selected Action"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    action_name: bpy.props.StringProperty(name="Action Name", default="") # type: ignore
+    action_type: bpy.props.EnumProperty( # type: ignore
+        name="Target Source",
+        items=[
+            ('AUTO', "Auto", "Detect from dropdown or active character"),
+            ('SAVED', "Saved Action", "Delete action selected in Saved Action dropdown"),
+            ('TRANSFER', "Transfer Action", "Delete action selected in Transfer Action dropdown"),
+            ('ACTIVE', "Active Action", "Delete active object's current action"),
+        ],
+        default='AUTO'
+    )
+    
+    def execute(self, context):
+        scene = context.scene
+        target_action = None
+        target_name = self.action_name
+        
+        if not target_name:
+            if self.action_type == 'TRANSFER':
+                transfer_act = getattr(scene, "hrg_anim_transfer_action", 'ACTIVE')
+                if transfer_act != 'ACTIVE' and transfer_act != 'NONE':
+                    target_name = transfer_act
+                else:
+                    src_obj = getattr(scene, "hrg_anim_source_rig", None) or context.active_object
+                    if src_obj and src_obj.animation_data and src_obj.animation_data.action:
+                        target_action = src_obj.animation_data.action
+            elif self.action_type == 'SAVED':
+                saved_act = getattr(scene, "hrg_scene_action", 'NONE')
+                if saved_act and saved_act != 'NONE':
+                    target_name = saved_act
+                elif context.active_object and context.active_object.animation_data and context.active_object.animation_data.action:
+                    target_action = context.active_object.animation_data.action
+            else: # AUTO
+                saved_act = getattr(scene, "hrg_scene_action", 'NONE')
+                transfer_act = getattr(scene, "hrg_anim_transfer_action", 'ACTIVE')
+                if saved_act and saved_act != 'NONE':
+                    target_name = saved_act
+                elif transfer_act and transfer_act != 'ACTIVE' and transfer_act != 'NONE':
+                    target_name = transfer_act
+                elif context.active_object and context.active_object.animation_data and context.active_object.animation_data.action:
+                    target_action = context.active_object.animation_data.action
+                    
+        if not target_action and target_name:
+            target_action = bpy.data.actions.get(target_name)
+            
+        # Ultimate fallback: if nothing was explicitly chosen in dropdown, pick active rig action or any remaining action!
+        if not target_action:
+            if context.active_object and context.active_object.animation_data and context.active_object.animation_data.action:
+                target_action = context.active_object.animation_data.action
+            elif len(bpy.data.actions) > 0:
+                target_action = bpy.data.actions[0]
+            
+        if not target_action:
+            self.report({'WARNING'}, "No Action found in the blend file to delete!")
+            return {'CANCELLED'}
+            
+        deleted_name = target_action.name
+        
+        # 1. Safely unlink this action from all objects in the scene
+        for obj in bpy.data.objects:
+            if obj.animation_data and obj.animation_data.action == target_action:
+                try:
+                    obj.animation_data.action = None
+                except Exception:
+                    pass
+                    
+        # 2. Clear fake user protection
+        target_action.use_fake_user = False
+        
+        # 3. Remove action permanently from blend file database
+        try:
+            bpy.data.actions.remove(target_action, do_unlink=True)
+            self.report({'INFO'}, f"Deleted Action '{deleted_name}' permanently from the blend file!")
+        except Exception as e:
+            self.report({'WARNING'}, f"Could not remove action '{deleted_name}': {e}")
+            return {'CANCELLED'}
+            
+        # 4. Auto-advance dropdowns to the next available action so the user can keep deleting without re-selecting
+        remaining = [a.name for a in bpy.data.actions]
+        next_act = remaining[0] if remaining else 'NONE'
+        
+        if getattr(scene, "hrg_scene_action", None) == deleted_name or getattr(scene, "hrg_scene_action", 'NONE') == 'NONE':
+            scene.hrg_scene_action = next_act
+            
+        if getattr(scene, "hrg_anim_transfer_action", None) == deleted_name or getattr(scene, "hrg_anim_transfer_action", 'ACTIVE') == 'NONE':
+            scene.hrg_anim_transfer_action = next_act if remaining else 'ACTIVE'
             
         return {'FINISHED'}
 
@@ -2571,7 +2724,8 @@ class OBJECT_OT_purge_unused_actions(bpy.types.Operator):
         removed_count = 0
         for act in list(bpy.data.actions):
             # Check if this action is not actively assigned to any object
-            if act.users == 0 or (act.users == 1 and act.use_fake_user and not any(o.animation_data and o.animation_data.action == act for o in bpy.data.objects)):
+            is_used_by_obj = any(o.animation_data and o.animation_data.action == act for o in bpy.data.objects)
+            if not is_used_by_obj:
                 try:
                     act.use_fake_user = False
                     bpy.data.actions.remove(act, do_unlink=True)
@@ -2652,6 +2806,599 @@ class OBJECT_OT_scale_animation_timing(bpy.types.Operator):
         self.report({'INFO'}, f"Scaled animation timing by {self.factor}x!")
         return {'FINISHED'}
 
+def retarget_rig_internal_constraints(arm_obj, orig_arm_obj=None):
+    """
+    Retargets all bone constraints (IK, Copy Transforms, Copy Location/Rotation, TrackTo, etc.)
+    and child mesh Armature modifiers so the rig's internal constraints point to itself
+    rather than pointing to another/original armature.
+    """
+    if not arm_obj or arm_obj.type != 'ARMATURE':
+        return 0
+        
+    retargeted_count = 0
+    
+    # 1. Pose Bones Constraints
+    for pb in arm_obj.pose.bones:
+        for c in pb.constraints:
+            # Target
+            if hasattr(c, "target") and c.target:
+                if c.target != arm_obj and c.target.type == 'ARMATURE':
+                    c.target = arm_obj
+                    retargeted_count += 1
+                        
+            # Pole target for IK
+            if hasattr(c, "pole_target") and c.pole_target:
+                if c.pole_target != arm_obj and c.pole_target.type == 'ARMATURE':
+                    c.pole_target = arm_obj
+                    retargeted_count += 1
+                    
+    # 2. Child Meshes and all scene meshes rigged to this armature or parented to it
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH':
+            if obj.parent == arm_obj or obj.name.startswith(arm_obj.name):
+                for mod in obj.modifiers:
+                    if mod.type == 'ARMATURE' and mod.object != arm_obj:
+                        mod.object = arm_obj
+                        retargeted_count += 1
+            elif orig_arm_obj and obj.parent != orig_arm_obj:
+                for mod in obj.modifiers:
+                    if mod.type == 'ARMATURE' and mod.object == orig_arm_obj:
+                        mod.object = arm_obj
+                        obj.parent = arm_obj
+                        retargeted_count += 1
+                            
+    # 3. Trigger pose constraint evaluation & IK/FK blend influences
+    from ..utils.naming import get_org_name
+    for pb in arm_obj.pose.bones:
+        if hasattr(pb, "hrg_ik_fk"):
+            val = pb.hrg_ik_fk
+            side = ".L" if pb.name.endswith(".L") else ".R"
+            is_arm = "hand" in pb.name
+            chain = [f"upper_arm{side}", f"forearm{side}", f"hand{side}"] if is_arm else [f"thigh{side}", f"shin{side}", f"foot{side}", f"toe{side}"]
+            for bone_base in chain:
+                org_name = get_org_name(bone_base)
+                pb_org = arm_obj.pose.bones.get(org_name)
+                if pb_org:
+                    for c in pb_org.constraints:
+                        if c.name in ["Copy_FK_Loc", "Copy_FK_Rot"]:
+                            c.influence = 1.0 - val
+                        elif c.name in ["Copy_IK_Loc", "Copy_IK_Rot"]:
+                            c.influence = val
+
+    return retargeted_count
+
+class OBJECT_OT_fix_clone_constraints(bpy.types.Operator):
+    """Retargets and fixes all internal bone constraints on the selected character rig so it moves independently."""
+    bl_idname = "object.fix_clone_constraints"
+    bl_label = "Fix Rig Constraints"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'ARMATURE':
+            self.report({'WARNING'}, "Please select a character Armature rig to fix!")
+            return {'CANCELLED'}
+            
+        count = retarget_rig_internal_constraints(obj)
+        context.view_layer.update()
+        self.report({'INFO'}, f"Relinked {count} internal bone constraints & modifiers on '{obj.name}'!")
+        return {'FINISHED'}
+
+def get_scene_actions_items(self, context):
+    """Dynamic enum of all animation actions available in the blend file."""
+    items = [('NONE', "Select Saved Action", "No action selected")]
+    for act in bpy.data.actions:
+        fcurves = get_action_fcurves(act)
+        valid_ranges = [fc.range() for fc in fcurves if len(fc.keyframe_points) > 0]
+        if valid_ranges:
+            min_f = int(min(r[0] for r in valid_ranges))
+            max_f = int(max(r[1] for r in valid_ranges))
+            duration = max_f - min_f + 1
+            items.append((act.name, f"{act.name} ({duration}f)", f"Apply action '{act.name}' (Frames {min_f}-{max_f})"))
+        else:
+            items.append((act.name, act.name, f"Apply action '{act.name}'"))
+    return items
+
+class OBJECT_OT_apply_saved_action(bpy.types.Operator):
+    """Applies a saved Action from the scene to the active character rig or clone, preserving world position."""
+    bl_idname = "object.apply_saved_action"
+    bl_label = "Apply Saved Action"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    make_copy: bpy.props.BoolProperty( # type: ignore
+        name="Make Independent Copy",
+        description="Creates an independent copy of the action for this character so edits don't overwrite the original",
+        default=False
+    )
+    
+    preserve_location: bpy.props.BoolProperty( # type: ignore
+        name="Preserve Character Position",
+        description="Preserves the character's current location in the scene so it doesn't snap back to origin",
+        default=True
+    )
+    
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'ARMATURE':
+            self.report({'WARNING'}, "Please select a character Armature rig first!")
+            return {'CANCELLED'}
+            
+        scene = context.scene
+        action_name = getattr(scene, "hrg_scene_action", 'NONE')
+        if action_name == 'NONE' or not action_name:
+            self.report({'WARNING'}, "Please select an Action from the 'Saved Action' dropdown first!")
+            return {'CANCELLED'}
+            
+        source_action = bpy.data.actions.get(action_name)
+        if not source_action:
+            self.report({'WARNING'}, f"Action '{action_name}' not found in blend file!")
+            return {'CANCELLED'}
+            
+        # Relink any stray constraints so rig evaluates its own bones
+        retarget_rig_internal_constraints(obj)
+        
+        current_loc = obj.location.copy()
+        
+        if not obj.animation_data:
+            obj.animation_data_create()
+            
+        if self.make_copy:
+            target_action = source_action.copy()
+            target_action.name = f"{obj.name}_{source_action.name}"
+            target_action.use_fake_user = True
+        else:
+            target_action = source_action
+            target_action.use_fake_user = True
+            
+        # Unmute any muted tracks
+        if obj.animation_data.nla_tracks:
+            for track in obj.animation_data.nla_tracks:
+                track.mute = True
+                
+        assign_action_to_rig(obj, target_action)
+        
+        # If preserving position, offset any object location curves so clone stays at its location
+        if self.preserve_location and self.make_copy:
+            fcurves = get_action_fcurves(target_action)
+            obj_loc_fcs = [fc for fc in fcurves if fc.data_path == "location"]
+            if obj_loc_fcs:
+                first_key_loc = mathutils.Vector((0.0, 0.0, 0.0))
+                for fc in obj_loc_fcs:
+                    if len(fc.keyframe_points) > 0:
+                        first_key_loc[fc.array_index] = fc.keyframe_points[0].co[1]
+                delta = current_loc - first_key_loc
+                for fc in obj_loc_fcs:
+                    offset = delta[fc.array_index]
+                    for kp in fc.keyframe_points:
+                        kp.co[1] += offset
+                        kp.handle_left[1] += offset
+                        kp.handle_right[1] += offset
+            else:
+                obj.location = current_loc
+        else:
+            obj.location = current_loc
+                
+        # Update timeline range if enabled
+        if getattr(scene, "hrg_set_timeline_range", True):
+            fcurves = get_action_fcurves(target_action)
+            valid_ranges = [fc.range() for fc in fcurves if len(fc.keyframe_points) > 0]
+            if valid_ranges:
+                scene.frame_start = int(min(r[0] for r in valid_ranges))
+                scene.frame_end = int(max(r[1] for r in valid_ranges))
+                
+        # Force evaluation & update
+        for o in context.selected_objects:
+            o.select_set(False)
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        if bpy.ops.object.mode_set.poll():
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.ops.object.mode_set(mode='POSE')
+            context.view_layer.update()
+            
+        context.view_layer.update()
+        self.report({'INFO'}, f"Applied Action '{target_action.name}' to '{obj.name}' successfully!")
+        return {'FINISHED'}
+
+class OBJECT_OT_copy_animation_from_actor(bpy.types.Operator):
+    """Copies the full animation action from another actor/character to the active character rig."""
+    bl_idname = "object.copy_animation_from_actor"
+    bl_label = "Copy Animation From Actor"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        target_obj = context.active_object
+        if not target_obj or target_obj.type != 'ARMATURE':
+            self.report({'WARNING'}, "Please select the target character Armature first!")
+            return {'CANCELLED'}
+            
+        scene = context.scene
+        src_actor_name = getattr(scene, "hrg_source_actor_to_copy", 'NONE')
+        if src_actor_name == 'NONE' or not src_actor_name:
+            self.report({'WARNING'}, "Please select a Source Actor to copy animation from!")
+            return {'CANCELLED'}
+            
+        src_obj = bpy.data.objects.get(src_actor_name)
+        if not src_obj or src_obj.type != 'ARMATURE':
+            self.report({'WARNING'}, f"Source Actor '{src_actor_name}' is not a valid armature!")
+            return {'CANCELLED'}
+            
+        if src_obj == target_obj:
+            self.report({'WARNING'}, "Source Actor and Target Actor are the same object!")
+            return {'CANCELLED'}
+            
+        if not src_obj.animation_data or not src_obj.animation_data.action:
+            self.report({'WARNING'}, f"Source Actor '{src_obj.name}' has no active animation action to copy!")
+            return {'CANCELLED'}
+            
+        # Relink target constraints
+        retarget_rig_internal_constraints(target_obj, src_obj)
+        
+        current_loc = target_obj.location.copy()
+        src_action = src_obj.animation_data.action
+        
+        use_copy = getattr(scene, "hrg_anim_make_copy", False)
+        if use_copy:
+            cloned_action = src_action.copy()
+            cloned_action.name = f"{target_obj.name}_{src_action.name}"
+            cloned_action.use_fake_user = True
+        else:
+            cloned_action = src_action
+            cloned_action.use_fake_user = True
+        
+        if not target_obj.animation_data:
+            target_obj.animation_data_create()
+            
+        if target_obj.animation_data.nla_tracks:
+            for track in target_obj.animation_data.nla_tracks:
+                track.mute = True
+                
+        assign_action_to_rig(target_obj, cloned_action)
+        
+        # Offset object location curves so target stays at its position
+        fcurves = get_action_fcurves(cloned_action)
+        if use_copy:
+            obj_loc_fcs = [fc for fc in fcurves if fc.data_path == "location"]
+            if obj_loc_fcs:
+                first_key_loc = src_obj.location.copy()
+                delta = current_loc - first_key_loc
+                for fc in obj_loc_fcs:
+                    offset = delta[fc.array_index]
+                    for kp in fc.keyframe_points:
+                        kp.co[1] += offset
+                        kp.handle_left[1] += offset
+                        kp.handle_right[1] += offset
+            else:
+                target_obj.location = current_loc
+        else:
+            target_obj.location = current_loc
+            
+        if getattr(scene, "hrg_set_timeline_range", True):
+            valid_ranges = [fc.range() for fc in fcurves if len(fc.keyframe_points) > 0]
+            if valid_ranges:
+                scene.frame_start = int(min(r[0] for r in valid_ranges))
+                scene.frame_end = int(max(r[1] for r in valid_ranges))
+                
+        # Force evaluation & update
+        for o in context.selected_objects:
+            o.select_set(False)
+        target_obj.select_set(True)
+        context.view_layer.objects.active = target_obj
+        if bpy.ops.object.mode_set.poll():
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.ops.object.mode_set(mode='POSE')
+            context.view_layer.update()
+            
+        context.view_layer.update()
+        self.report({'INFO'}, f"Copied animation from '{src_obj.name}' to '{target_obj.name}' successfully!")
+        return {'FINISHED'}
+
+class OBJECT_OT_save_custom_action(bpy.types.Operator):
+    """Saves and stashes the current character's animation as a named Action in the blend file with Fake User."""
+    bl_idname = "object.save_custom_action"
+    bl_label = "Save Current Animation as Action"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    action_name: bpy.props.StringProperty( # type: ignore
+        name="Action Name",
+        description="Name to give the saved action",
+        default="Custom_Pose_Action"
+    )
+    
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj and obj.animation_data and obj.animation_data.action:
+            self.action_name = obj.animation_data.action.name
+        elif obj:
+            self.action_name = f"{obj.name}_CustomAction"
+        return context.window_manager.invoke_props_dialog(self)
+        
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or not obj.animation_data or not obj.animation_data.action:
+            self.report({'WARNING'}, "No active animation action found on the selected character!")
+            return {'CANCELLED'}
+            
+        action = obj.animation_data.action
+        if self.action_name:
+            action.name = self.action_name
+        action.use_fake_user = True
+        
+        context.scene.hrg_scene_action = action.name
+        self.report({'INFO'}, f"Saved Action '{action.name}' with Fake User protection!")
+        return {'FINISHED'}
+
+class OBJECT_OT_import_actions_from_blend(bpy.types.Operator, ImportHelper):
+    """Imports and appends saved animation Actions from another Blender project (.blend file) into your Action Library."""
+    bl_idname = "object.import_actions_from_blend"
+    bl_label = "Import Actions from Project"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    filepath: bpy.props.StringProperty( # type: ignore
+        name="Blender File",
+        description="Select the Blender file (.blend) containing saved animations",
+        subtype='FILE_PATH'
+    )
+    
+    filter_glob: bpy.props.StringProperty( # type: ignore
+        default="*.blend",
+        options={'HIDDEN'},
+        maxlen=255,
+    )
+    
+    apply_to_active: bpy.props.BoolProperty( # type: ignore
+        name="Apply First Action to Active Character",
+        description="Immediately assigns the first imported action to the currently selected character",
+        default=True
+    )
+    
+    def execute(self, context):
+        if not self.filepath or not self.filepath.lower().endswith(".blend"):
+            self.report({'WARNING'}, "Please select a valid Blender project file (.blend)!")
+            return {'CANCELLED'}
+            
+        try:
+            with bpy.data.libraries.load(self.filepath, link=False) as (data_from, data_to):
+                if not data_from.actions:
+                    self.report({'WARNING'}, f"No saved actions found in '{os.path.basename(self.filepath)}'!")
+                    return {'CANCELLED'}
+                data_to.actions = data_from.actions
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to load actions from '{os.path.basename(self.filepath)}': {e}")
+            return {'CANCELLED'}
+            
+        imported_actions = [a for a in data_to.actions if a is not None]
+        if not imported_actions:
+            self.report({'WARNING'}, "No actions were imported!")
+            return {'CANCELLED'}
+            
+        for act in imported_actions:
+            act.use_fake_user = True
+            
+        # Set dropdown to first imported action
+        first_act = imported_actions[0]
+        context.scene.hrg_scene_action = first_act.name
+        context.scene.hrg_anim_transfer_action = first_act.name
+        
+        # Apply to active character if selected
+        obj = context.active_object
+        if self.apply_to_active and obj and obj.type == 'ARMATURE' and first_act:
+            assign_action_to_rig(obj, first_act)
+            retarget_rig_internal_constraints(obj)
+            self.report({'INFO'}, f"Successfully imported {len(imported_actions)} actions and applied '{first_act.name}' to '{obj.name}'!")
+        else:
+            self.report({'INFO'}, f"Successfully imported {len(imported_actions)} actions into Action Library!")
+            
+        return {'FINISHED'}
+
+def get_transfer_action_items(self, context):
+    """Dynamic enum of actions available for transfer, prioritizing the source rig's action."""
+    items = [('ACTIVE', "★ Active Action on Source Rig", "Transfer whatever animation is currently active on the source character")]
+    for act in bpy.data.actions:
+        fcurves = get_action_fcurves(act)
+        valid_ranges = [fc.range() for fc in fcurves if len(fc.keyframe_points) > 0]
+        if valid_ranges:
+            min_f = int(min(r[0] for r in valid_ranges))
+            max_f = int(max(r[1] for r in valid_ranges))
+            duration = max_f - min_f + 1
+            items.append((act.name, f"{act.name} ({duration}f: {min_f}-{max_f})", f"Transfer action '{act.name}'"))
+        else:
+            items.append((act.name, act.name, f"Transfer action '{act.name}'"))
+    return items
+
+class OBJECT_OT_pick_anim_source_rig(bpy.types.Operator):
+    """Picks the currently selected 3D Viewport armature or character as the Source for animation transfer."""
+    bl_idname = "object.pick_anim_source_rig"
+    bl_label = "Pick Source Character"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        picked_obj = None
+        if context.active_object and context.active_object.type == 'ARMATURE':
+            picked_obj = context.active_object
+        elif context.active_object and context.active_object.parent and context.active_object.parent.type == 'ARMATURE':
+            picked_obj = context.active_object.parent
+            
+        if not picked_obj:
+            for o in context.selected_objects:
+                if o.type == 'ARMATURE':
+                    picked_obj = o
+                    break
+                elif o.parent and o.parent.type == 'ARMATURE':
+                    picked_obj = o.parent
+                    break
+                    
+        if not picked_obj:
+            self.report({'WARNING'}, "Please select a character Armature rig in the 3D Viewport first!")
+            return {'CANCELLED'}
+            
+        context.scene.hrg_anim_source_rig = picked_obj
+        self.report({'INFO'}, f"Selected Source Character: '{picked_obj.name}'")
+        return {'FINISHED'}
+
+class OBJECT_OT_pick_anim_target_rig(bpy.types.Operator):
+    """Picks the currently selected 3D Viewport armature or character as the Target for animation transfer."""
+    bl_idname = "object.pick_anim_target_rig"
+    bl_label = "Pick Target Character"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    def execute(self, context):
+        picked_obj = None
+        if context.active_object and context.active_object.type == 'ARMATURE':
+            picked_obj = context.active_object
+        elif context.active_object and context.active_object.parent and context.active_object.parent.type == 'ARMATURE':
+            picked_obj = context.active_object.parent
+            
+        if not picked_obj:
+            for o in context.selected_objects:
+                if o.type == 'ARMATURE':
+                    picked_obj = o
+                    break
+                elif o.parent and o.parent.type == 'ARMATURE':
+                    picked_obj = o.parent
+                    break
+                    
+        if not picked_obj:
+            self.report({'WARNING'}, "Please select a target character Armature rig in the 3D Viewport first!")
+            return {'CANCELLED'}
+            
+        context.scene.hrg_anim_target_rig = picked_obj
+        self.report({'INFO'}, f"Selected Target Character: '{picked_obj.name}'")
+        return {'FINISHED'}
+
+class OBJECT_OT_transfer_actor_animation(bpy.types.Operator):
+    """Transfers selected action/pose animation from Source Character to Target Character/Clone."""
+    bl_idname = "object.transfer_actor_animation"
+    bl_label = "Transfer Animation Data"
+    bl_options = {'REGISTER', 'UNDO'}
+    
+    make_copy: bpy.props.BoolProperty( # type: ignore
+        name="Make Independent Action Copy",
+        description="If checked, creates a new unique action copy for the clone. If unchecked, shares the exact same action directly",
+        default=False
+    )
+    
+    preserve_location: bpy.props.BoolProperty( # type: ignore
+        name="Preserve Target Position",
+        description="Preserves the target character's world position so it doesn't snap to source location",
+        default=True
+    )
+    
+    def execute(self, context):
+        scene = context.scene
+        
+        # 1. Resolve Source Rig
+        src_obj = getattr(scene, "hrg_anim_source_rig", None)
+        if not src_obj:
+            src_name = getattr(scene, "hrg_source_actor_to_copy", 'NONE')
+            if src_name != 'NONE' and src_name:
+                src_obj = bpy.data.objects.get(src_name)
+                
+        # 2. Resolve Target Rig
+        target_obj = getattr(scene, "hrg_anim_target_rig", None)
+        if not target_obj:
+            if context.active_object and context.active_object.type == 'ARMATURE' and context.active_object != src_obj:
+                target_obj = context.active_object
+            elif getattr(scene, "hrg_active_actor", 'NONE') != 'NONE':
+                target_obj = bpy.data.objects.get(scene.hrg_active_actor)
+                
+        if not src_obj or src_obj.type != 'ARMATURE':
+            self.report({'WARNING'}, "Please select a valid Source Character Rig (use the Pen icon or dropdown)!")
+            return {'CANCELLED'}
+            
+        if not target_obj or target_obj.type != 'ARMATURE':
+            self.report({'WARNING'}, "Please select a valid Target Character Rig (use the Pen icon or dropdown)!")
+            return {'CANCELLED'}
+            
+        if src_obj == target_obj:
+            self.report({'WARNING'}, "Source Character and Target Character cannot be the same rig!")
+            return {'CANCELLED'}
+            
+        # 3. Retarget target constraints to itself so it evaluates its own controls
+        retarget_rig_internal_constraints(target_obj, src_obj)
+        
+        # 4. Determine Action to transfer
+        action_choice = getattr(scene, "hrg_anim_transfer_action", 'ACTIVE')
+        source_action = None
+        
+        if action_choice == 'ACTIVE' or not action_choice:
+            if src_obj.animation_data and src_obj.animation_data.action:
+                source_action = src_obj.animation_data.action
+            else:
+                self.report({'WARNING'}, f"Source Character '{src_obj.name}' does not have an active animation action!")
+                return {'CANCELLED'}
+        else:
+            source_action = bpy.data.actions.get(action_choice)
+            if not source_action and src_obj.animation_data and src_obj.animation_data.action:
+                source_action = src_obj.animation_data.action
+                    
+        if not source_action:
+            self.report({'WARNING'}, "No valid Action found to transfer!")
+            return {'CANCELLED'}
+            
+        # 5. Record target's current world location
+        target_loc = target_obj.location.copy()
+        src_loc = src_obj.location.copy()
+        
+        # 6. Assign Action to Target (Shared or Copy based on user preference)
+        use_copy = getattr(scene, "hrg_anim_make_copy", self.make_copy)
+        if use_copy:
+            final_action = source_action.copy()
+            final_action.name = f"{target_obj.name}_{source_action.name}"
+            final_action.use_fake_user = True
+        else:
+            final_action = source_action
+            final_action.use_fake_user = True
+            
+        if not target_obj.animation_data:
+            target_obj.animation_data_create()
+            
+        # Make sure NLA tracks don't override the active action on target
+        if target_obj.animation_data.nla_tracks:
+            for track in target_obj.animation_data.nla_tracks:
+                track.mute = True
+                
+        assign_action_to_rig(target_obj, final_action)
+        
+        # 7. If preserving location, offset object location fcurves
+        fcurves = get_action_fcurves(final_action)
+        if self.preserve_location and use_copy:
+            obj_loc_fcs = [fc for fc in fcurves if fc.data_path == "location"]
+            if obj_loc_fcs:
+                delta = target_loc - src_loc
+                for fc in obj_loc_fcs:
+                    offset = delta[fc.array_index]
+                    for kp in fc.keyframe_points:
+                        kp.co[1] += offset
+                        kp.handle_left[1] += offset
+                        kp.handle_right[1] += offset
+            else:
+                target_obj.location = target_loc
+        else:
+            target_obj.location = target_loc
+                
+        # 8. Update timeline range if auto-fit enabled
+        if getattr(scene, "hrg_set_timeline_range", True):
+            valid_ranges = [fc.range() for fc in fcurves if len(fc.keyframe_points) > 0]
+            if valid_ranges:
+                scene.frame_start = int(min(r[0] for r in valid_ranges))
+                scene.frame_end = int(max(r[1] for r in valid_ranges))
+                
+        # 9. Ensure Target is selected and active so viewport and timeline focus on it
+        for o in context.selected_objects:
+            o.select_set(False)
+        target_obj.select_set(True)
+        context.view_layer.objects.active = target_obj
+        
+        if bpy.ops.object.mode_set.poll():
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.ops.object.mode_set(mode='POSE')
+            context.view_layer.update()
+            
+        context.view_layer.update()
+        self.report({'INFO'}, f"Transferred Action '{final_action.name}' to '{target_obj.name}' successfully!")
+        return {'FINISHED'}
+
 class OBJECT_OT_clone_character_actor(bpy.types.Operator):
     """Clones the selected character rig and all attached skinned meshes into independent, conflict-free actors."""
     bl_idname = "object.clone_character_actor"
@@ -2709,7 +3456,8 @@ class OBJECT_OT_clone_character_actor(bpy.types.Operator):
             new_arm_name = f"{base_name}_Actor{clone_suffix}"
             
             # Select original armature and all skinned meshes together
-            bpy.ops.object.select_all(action='DESELECT')
+            for o in context.selected_objects:
+                o.select_set(False)
             orig_armature.select_set(True)
             for m in skinned_meshes:
                 m.select_set(True)
@@ -2726,14 +3474,34 @@ class OBJECT_OT_clone_character_actor(bpy.types.Operator):
             if new_arm_obj.data:
                 new_arm_obj.data.name = f"{new_arm_name}_Data"
                 
-            # Create unique independent action
+            # Retarget all internal bone constraints and modifiers from orig_armature to new_arm_obj!
+            retarget_rig_internal_constraints(new_arm_obj, orig_armature)
+                
+            dx = self.offset_spacing * clone_idx
+            # Create unique independent action copy if original had animation, or new action
             if not new_arm_obj.animation_data:
                 new_arm_obj.animation_data_create()
-            new_action = bpy.data.actions.new(f"{new_arm_name}_Action")
-            new_arm_obj.animation_data.action = new_action
+                
+            if orig_armature.animation_data and orig_armature.animation_data.action:
+                cloned_act = orig_armature.animation_data.action.copy()
+                cloned_act.name = f"{orig_armature.animation_data.action.name}{clone_suffix}"
+                cloned_act.use_fake_user = True
+                assign_action_to_rig(new_arm_obj, cloned_act)
+                
+                # Offset any object location keyframes by clone dx
+                fcurves = get_action_fcurves(cloned_act)
+                for fc in fcurves:
+                    if fc.data_path == "location" and fc.array_index == 0:
+                        for kp in fc.keyframe_points:
+                            kp.co[1] += dx
+                            kp.handle_left[1] += dx
+                            kp.handle_right[1] += dx
+            else:
+                new_action = bpy.data.actions.new(f"{new_arm_name}_Action")
+                assign_action_to_rig(new_arm_obj, new_action)
             
             # Offset position along X
-            new_arm_obj.location.x = orig_armature.location.x + (self.offset_spacing * clone_idx)
+            new_arm_obj.location.x = orig_armature.location.x + dx
             
             # Relink meshes, make mesh data and materials single-user
             for mesh_obj in new_meshes:

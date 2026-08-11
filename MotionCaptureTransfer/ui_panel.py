@@ -4,11 +4,11 @@ from .dependency_installer import check_dependencies
 
 class VIEW3D_PT_mocap_transfer_panel(bpy.types.Panel):
     """Creates a Panel in the 3D Viewport Sidebar for Motion Capture Transfer."""
-    bl_label = "Motion Capture Transfer"
+    bl_label = "RigAnim Mocap: AI Performance Capture"
     bl_idname = "VIEW3D_PT_mocap_transfer_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Human Rig' # Align with Human Rig Generator tab in Sidebar!
+    bl_category = 'RigAnim Studio' # Aligned under RigAnim Studio tab!
     
     def draw(self, context):
         layout = self.layout

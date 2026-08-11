@@ -1,13 +1,13 @@
 # __init__.py
 
 bl_info = {
-    "name": "Human Rig Generator",
+    "name": "RigAnim Studio: Character, Rigging & World Suite",
     "author": "Antigravity",
-    "version": (1, 0, 0),
+    "version": (2, 0, 0),
     "blender": (4, 0, 0),
-    "location": "View3D > Sidebar > Human Rig",
-    "description": "Generates a fully featured humanoid rig with IK/FK switching, face, fingers, toes, and custom widgets.",
-    "category": "Rigging",
+    "location": "View3D > Sidebar > RigAnim Studio",
+    "description": "Professional 3D character rigging, auto-skinning, animation sequencing, multi-actor crowds, prop attacher, and world asset spawner.",
+    "category": "Animation",
 }
 
 # Support recursive reloading for developer convenience
@@ -36,17 +36,38 @@ if "registration" in locals():
     importlib.reload(bones)
     importlib.reload(mirror)
     importlib.reload(widgets)
+    try:
+        from . import mocap
+        importlib.reload(mocap)
+    except Exception:
+        pass
 else:
     import bpy
     from . import registration
     from .ui import panel
     from .operators import create_rig, generate_spine, generate_arms, generate_hands, generate_legs, generate_feet, generate_face, generate_ik, generate_fk, constraints, controllers, markers, animation, generate_animal, generate_bird, auto_skin
     from .utils import naming, math, bones, mirror, widgets
+    try:
+        from . import mocap
+    except Exception:
+        mocap = None
 
 def register():
     registration.register()
+    try:
+        from . import mocap
+        if hasattr(mocap, "register"):
+            mocap.register()
+    except Exception as e:
+        print("[RigAnim Studio] Mocap module registration note:", e)
 
 def unregister():
+    try:
+        from . import mocap
+        if hasattr(mocap, "unregister"):
+            mocap.unregister()
+    except Exception:
+        pass
     registration.unregister()
 
 if __name__ == "__main__":

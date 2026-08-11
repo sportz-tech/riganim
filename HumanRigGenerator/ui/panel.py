@@ -4,11 +4,11 @@ from ..utils.naming import get_control_name
 
 class VIEW3D_PT_human_rig_generator(bpy.types.Panel):
     """Creates a Panel in the 3D Viewport Sidebar."""
-    bl_label = "Human Rig Generator"
+    bl_label = "RigAnim Studio Suite"
     bl_idname = "VIEW3D_PT_human_rig_generator"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Human Rig'
+    bl_category = 'RigAnim Studio'
     
     def draw(self, context):
         layout = self.layout
@@ -29,8 +29,36 @@ class VIEW3D_PT_human_rig_generator(bpy.types.Panel):
             row_clone.prop(scene, "hrg_clone_count", text="Count")
             row_clone.operator("object.clone_character_actor", text="Clone Actor", icon='DUPLICATE')
             
+            # Animation & Action Data Transfer with Eyedropper Pens
+            box_transfer = col_actor.box()
+            box_transfer.label(text="Animation & Action Transfer:", icon='ANIM_DATA')
+            
+            # Source Rig (with built-in pen and quick eyedropper button)
+            row_src = box_transfer.row(align=True)
+            row_src.prop(scene, "hrg_anim_source_rig", text="Source Rig")
+            row_src.operator("object.pick_anim_source_rig", text="", icon='EYEDROPPER')
+            
+            # Target Rig (with built-in pen and quick eyedropper button)
+            row_tgt = box_transfer.row(align=True)
+            row_tgt.prop(scene, "hrg_anim_target_rig", text="Target Rig")
+            row_tgt.operator("object.pick_anim_target_rig", text="", icon='EYEDROPPER')
+            
+            # Action to Transfer with Delete Trash Button
+            row_act_trans = box_transfer.row(align=True)
+            row_act_trans.prop(scene, "hrg_anim_transfer_action", text="Action")
+            op_del_trans = row_act_trans.operator("object.delete_selected_action", text="", icon='TRASH')
+            op_del_trans.action_type = 'TRANSFER'
+            
+            box_transfer.prop(scene, "hrg_anim_make_copy", text="Create Independent Action Copy")
+            
+            row_trans_btn = box_transfer.row(align=True)
+            row_trans_btn.operator("object.transfer_actor_animation", text="Transfer Animation Data", icon='PASTEDOWN')
+            row_trans_btn.operator("object.import_actions_from_blend", text="Import (.blend)", icon='FILE_FOLDER')
+            
             col_actor.separator()
-            col_actor.operator("object.reset_rig_to_origin", text="Snap Rig to Origin (0,0,0)", icon='SNAP_GRID')
+            row_fix = col_actor.row(align=True)
+            row_fix.operator("object.fix_clone_constraints", text="Fix / Relink Rig Constraints", icon='CONSTRAINT')
+            row_fix.operator("object.reset_rig_to_origin", text="Snap to Origin", icon='SNAP_GRID')
             
             row_clean = col_actor.row(align=True)
             row_clean.operator("object.delete_character_actor", text="Delete Actor & Clean", icon='TRASH')
@@ -63,20 +91,82 @@ class VIEW3D_PT_human_rig_generator(bpy.types.Panel):
             
             col_sp.operator("object.clear_spawn_points", text="Clear Spawn Points", icon='X')
 
+        # Asset & Mesh Spawner (Trees, Houses, Objects on Surface/Plane)
+        box_asset = layout.box()
+        row_asset_hdr = box_asset.row(align=True)
+        icon_asset = 'TRIA_DOWN' if getattr(scene, "hrg_show_asset_spawner", True) else 'TRIA_RIGHT'
+        row_asset_hdr.prop(scene, "hrg_show_asset_spawner", text="Asset & Mesh Spawner (Tree/House/Object)", icon=icon_asset, emboss=False)
+        if getattr(scene, "hrg_show_asset_spawner", True):
+            col_asset = box_asset.column(align=True)
+            
+            # Target Source Object Indicator / Picker
+            src_obj = getattr(scene, "hrg_spawn_source_obj", None) or (obj if obj and not obj.name.startswith("SpawnPoint_") and not obj.name.startswith("Mkr_") else None)
+            
+            row_src = col_asset.row(align=True)
+            row_src.prop(scene, "hrg_spawn_source_obj", text="Mesh / Object")
+            
+            row_imp_asset = col_asset.row(align=True)
+            row_imp_asset.operator("object.import_assets_from_blend", text="Import Assets from Project (.blend)", icon='FILE_FOLDER')
+            
+            if src_obj:
+                col_asset.label(text=f"Active Asset: {src_obj.name}", icon='OBJECT_DATAMODE')
+            else:
+                col_asset.label(text="Select any mesh in viewport to spawn", icon='INFO')
+                
+            col_asset.separator()
+            
+            # Count & Radius
+            row_cnt = col_asset.row(align=True)
+            row_cnt.prop(scene, "hrg_mesh_spawn_count", text="Count")
+            row_cnt.prop(scene, "hrg_mesh_spawn_radius", text="Radius (m)")
+            
+            # 1-Click Interactive Spawner (Click anywhere on plane)
+            col_asset.separator()
+            col_asset.operator("object.interactive_asset_spawner", text="Click Anywhere to Spawn Mesh", icon='RESTRICT_SELECT_OFF')
+            
+            # Scatter / Spawn at Cursor Buttons
+            row_sp_acts = col_asset.row(align=True)
+            row_sp_acts.operator("object.scatter_selected_mesh", text="Scatter on Surface", icon='MOD_PARTICLES')
+            row_sp_acts.operator("object.spawn_mesh_at_cursor", text="Spawn at Cursor", icon='CURSOR')
+            
+            # Natural Variation Controls Box
+            box_var = col_asset.box()
+            box_var.label(text="Placement & Natural Variation:", icon='MOD_DISPLACE')
+            
+            row_v1 = box_var.row(align=True)
+            row_v1.prop(scene, "hrg_mesh_random_rot", text="Random Rot Z")
+            row_v1.prop(scene, "hrg_mesh_align_normal", text="Align Normal")
+            
+            row_v2 = box_var.row(align=True)
+            row_v2.prop(scene, "hrg_mesh_random_scale", text="Random Scale")
+            if scene.hrg_mesh_random_scale:
+                row_sc = box_var.row(align=True)
+                row_sc.prop(scene, "hrg_mesh_scale_min", text="Min")
+                row_sc.prop(scene, "hrg_mesh_scale_max", text="Max")
+                
+            row_v3 = box_var.row(align=True)
+            row_v3.prop(scene, "hrg_mesh_z_offset", text="Z-Offset")
+            row_v3.prop(scene, "hrg_mesh_link_dups", text="Linked (Alt+D)")
+            
+            col_asset.separator()
+            col_asset.operator("object.clear_spawned_assets", text="Clear Spawned Meshes", icon='TRASH')
+
         # Prop & Tool Attacher
         box_prop = layout.box()
         row_prop = box_prop.row(align=True)
         icon_prop = 'TRIA_DOWN' if scene.hrg_show_props else 'TRIA_RIGHT'
-        row_prop.prop(scene, "hrg_show_props", text="Prop & Tool Attacher", icon=icon_prop, emboss=False)
+        row_prop.prop(scene, "hrg_show_props", text="Prop & Rig Attacher", icon=icon_prop, emboss=False)
         if scene.hrg_show_props:
             col_prop = box_prop.column(align=True)
-            col_prop.prop(scene, "hrg_prop_object", text="Prop")
+            row_prop_sel = col_prop.row(align=True)
+            row_prop_sel.prop(scene, "hrg_prop_source_obj", text="Prop / Rig")
+            row_prop_sel.operator("object.pick_prop_from_selection", text="", icon='EYEDROPPER')
             col_prop.prop(scene, "hrg_prop_target_actor", text="Holder Actor")
             col_prop.prop(scene, "hrg_prop_slot", text="Slot")
             col_prop.separator()
             
             row_att = col_prop.row(align=True)
-            row_att.operator("object.attach_prop", text="Attach Prop", icon='CONSTRAINT')
+            row_att.operator("object.attach_prop", text="Attach Prop / Rig", icon='CONSTRAINT')
             row_att.operator("object.detach_prop", text="Detach", icon='X')
             
             box_anim_prop = col_prop.box()
@@ -140,12 +230,25 @@ class VIEW3D_PT_human_rig_generator(bpy.types.Panel):
                 # Apply Button
                 col_anim.operator("object.apply_animation_preset", text="Apply Preset", icon='PLAY')
                 
+                # Saved Custom Actions & Transfer Section
+                box_saved = col_anim.box()
+                box_saved.label(text="Custom Action Library & Transfer:", icon='ACTION')
+                row_saved_act = box_saved.row(align=True)
+                row_saved_act.prop(scene, "hrg_scene_action", text="Action")
+                op_del_saved = row_saved_act.operator("object.delete_selected_action", text="", icon='TRASH')
+                op_del_saved.action_type = 'SAVED'
+                
+                row_act_ops = box_saved.row(align=True)
+                row_act_ops.operator("object.apply_saved_action", text="Apply to Active Actor", icon='PLAY')
+                row_act_ops.operator("object.save_custom_action", text="Save Current", icon='FILE_TICK')
+                box_saved.operator("object.import_actions_from_blend", text="Import Actions from Project (.blend)", icon='FILE_FOLDER')
+                
                 col_anim.separator()
                 col_anim.operator("object.clear_rig_animation", text="Clear All Keyframes", icon='X')
                 
                 row_act = col_anim.row(align=True)
-                row_act.operator("object.delete_active_action", text="Delete Action", icon='TRASH')
-                row_act.operator("object.purge_unused_actions", text="Purge Actions", icon='BRUSH_DATA')
+                row_act.operator("object.delete_active_action", text="Delete Active", icon='TRASH')
+                row_act.operator("object.purge_unused_actions", text="Purge Unused", icon='BRUSH_DATA')
                 
                 # Timing & Smoothing Tools
                 col_anim.separator()
