@@ -2085,7 +2085,7 @@ class OBJECT_OT_delete_timeline_marker(bpy.types.Operator):
         return {'FINISHED'}
 
 class OBJECT_OT_setup_dialogue_cameras(bpy.types.Operator):
-    """Sets up classic Over-the-Shoulder (OTS) dialogue cameras for two characters."""
+    """Sets up classic Over-the-Shoulder (OTS) dialogue cameras for two characters or clones."""
     bl_idname = "object.setup_dialogue_cameras"
     bl_label = "Setup Dialogue Cameras"
     bl_options = {'REGISTER', 'UNDO'}
@@ -2096,51 +2096,60 @@ class OBJECT_OT_setup_dialogue_cameras(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         
-        obj_a = bpy.data.objects.get(self.actor_a)
-        obj_b = bpy.data.objects.get(self.actor_b)
+        # Auto-detect actors if not explicitly set
+        all_armatures = [o for o in scene.objects if o.type == 'ARMATURE']
+        if len(all_armatures) < 2:
+            self.report({'WARNING'}, "At least two character rigs or clones are required for OTS dialogue cameras!")
+            return {'CANCELLED'}
+            
+        name_a = self.actor_a if self.actor_a and self.actor_a != 'NONE' else all_armatures[0].name
+        name_b = self.actor_b if self.actor_b and self.actor_b != 'NONE' else all_armatures[1].name
+        
+        if name_a == name_b and len(all_armatures) >= 2:
+            name_b = [o.name for o in all_armatures if o.name != name_a][0]
+            
+        obj_a = bpy.data.objects.get(name_a)
+        obj_b = bpy.data.objects.get(name_b)
         
         if not obj_a or not obj_b or obj_a.type != 'ARMATURE' or obj_b.type != 'ARMATURE':
-            self.report({'WARNING'}, "Please select two active armature actors!")
+            self.report({'WARNING'}, "Please select two valid character/clone armatures!")
             return {'CANCELLED'}
             
         from ..utils.naming import get_control_name
         
-        # 1. Get head bone world locations
         context.view_layer.update()
         
         head_bone_a = obj_a.pose.bones.get(get_control_name("head"))
         head_bone_b = obj_b.pose.bones.get(get_control_name("head"))
         
-        if not head_bone_a or not head_bone_b:
-            self.report({'WARNING'}, "Both characters must have a head bone!")
-            return {'CANCELLED'}
-            
-        # Get absolute positions
-        head_pos_a = obj_a.matrix_world @ head_bone_a.head
-        head_pos_b = obj_b.matrix_world @ head_bone_b.head
+        head_pos_a = (obj_a.matrix_world @ head_bone_a.head) if head_bone_a else (obj_a.matrix_world.translation + mathutils.Vector((0, 0, 1.6)))
+        head_pos_b = (obj_b.matrix_world @ head_bone_b.head) if head_bone_b else (obj_b.matrix_world.translation + mathutils.Vector((0, 0, 1.6)))
         
-        # Direction from A to B
         vec_ab = head_pos_b - head_pos_a
+        if vec_ab.length < 0.001:
+            vec_ab = mathutils.Vector((0, 1, 0))
         dir_ab = vec_ab.normalized()
         
-        # Perpendicular vector for shoulder offset
         perp_ab = mathutils.Vector((-dir_ab.y, dir_ab.x, 0.0)).normalized()
         
+        head_bone_name = get_control_name("head")
+        
         # Setup OTS Camera A (behind A, looking at B)
-        self.create_ots_camera(context, "Rig_Camera_OTS_A", obj_a, obj_b, head_pos_a, head_pos_b, dir_ab, perp_ab, get_control_name("head"))
+        self.create_ots_camera(context, "Rig_Camera_OTS_A", obj_a, obj_b, head_pos_a, head_pos_b, dir_ab, perp_ab, head_bone_name)
         
         # Setup OTS Camera B (behind B, looking at A)
-        self.create_ots_camera(context, "Rig_Camera_OTS_B", obj_b, obj_a, head_pos_b, head_pos_a, -dir_ab, -perp_ab, get_control_name("head"))
+        self.create_ots_camera(context, "Rig_Camera_OTS_B", obj_b, obj_a, head_pos_b, head_pos_a, -dir_ab, -perp_ab, head_bone_name)
         
-        # Force active camera in property
+        # Force active camera
         scene.hrg_active_camera = "Rig_Camera_OTS_A"
         scene.camera = bpy.data.objects.get("Rig_Camera_OTS_A")
         
-        self.report({'INFO'}, "Created Over-the-Shoulder Dialogue Cameras A and B!")
+        self.report({'INFO'}, f"Created OTS Dialogue Cameras between '{obj_a.name}' and '{obj_b.name}'!")
         return {'FINISHED'}
         
     def create_ots_camera(self, context, cam_name, host_obj, target_obj, host_head, target_head, dir_vec, perp_vec, head_bone_name):
         scene = context.scene
+        
         # Target empty on target_obj
         target_name = f"Cam_Target_{cam_name}"
         t_obj = bpy.data.objects.get(target_name)
@@ -2151,8 +2160,11 @@ class OBJECT_OT_setup_dialogue_cameras(bpy.types.Operator):
             scene.collection.objects.link(t_obj)
             
         t_obj.parent = target_obj
-        t_obj.parent_type = 'BONE'
-        t_obj.parent_bone = head_bone_name
+        if head_bone_name in target_obj.pose.bones:
+            t_obj.parent_type = 'BONE'
+            t_obj.parent_bone = head_bone_name
+        else:
+            t_obj.parent_type = 'OBJECT'
         t_obj.matrix_parent_inverse.identity()
         t_obj.location = (0.0, 0.0, 0.0)
         
@@ -2176,22 +2188,22 @@ class OBJECT_OT_setup_dialogue_cameras(bpy.types.Operator):
         track.up_axis = 'UP_Y'
         
         # Calculate OTS camera position:
-        # Behind host head (-dir_vec) by 0.65m, offset to the shoulder (perp_vec) by 0.25m, up slightly by 0.08m
-        cam_pos = host_head - dir_vec * 0.65 + perp_vec * 0.25
-        # Parent camera to host object / head bone to follow host movement anywhere in the scene
+        cam_pos = host_head - dir_vec * 0.75 + perp_vec * 0.3 + mathutils.Vector((0, 0, 0.08))
+        cam_obj.location = cam_pos
         cam_obj.parent = host_obj
-        cam_obj.parent_type = 'BONE'
-        cam_obj.parent_bone = head_bone_name
-        cam_obj.matrix_parent_inverse.identity()
-        head_bone_host = host_obj.pose.bones.get(head_bone_name)
-        if head_bone_host:
+        if head_bone_name in host_obj.pose.bones:
+            cam_obj.parent_type = 'BONE'
+            cam_obj.parent_bone = head_bone_name
+            head_bone_host = host_obj.pose.bones.get(head_bone_name)
             head_world_mat = host_obj.matrix_world @ head_bone_host.matrix
             cam_obj.location = head_world_mat.inverted() @ cam_pos
         else:
+            cam_obj.parent_type = 'OBJECT'
             cam_obj.location = host_obj.matrix_world.inverted() @ cam_pos
+        cam_obj.matrix_parent_inverse.identity()
 
 class OBJECT_OT_setup_auto_lighting(bpy.types.Operator):
-    """Spawns a professional three-point lighting setup targeting the selected character."""
+    """Spawns a studio film 3-point lighting setup dynamically tracking the selected character or clone."""
     bl_idname = "object.setup_auto_lighting"
     bl_label = "Auto-Lighting Setup"
     bl_options = {'REGISTER', 'UNDO'}
@@ -2199,83 +2211,117 @@ class OBJECT_OT_setup_auto_lighting(bpy.types.Operator):
     def execute(self, context):
         scene = context.scene
         obj = context.active_object
+        
         if not obj or obj.type != 'ARMATURE':
-            # Find any armature
-            for o in scene.objects:
-                if o.type == 'ARMATURE':
-                    obj = o
-                    break
+            # Check scene active actor property
+            actor_name = getattr(scene, "hrg_active_actor", None)
+            if actor_name and actor_name != 'NONE' and actor_name in bpy.data.objects:
+                obj = bpy.data.objects[actor_name]
+            else:
+                # Find first armature in scene
+                for o in scene.objects:
+                    if o.type == 'ARMATURE':
+                        obj = o
+                        break
+                        
         if not obj:
-            self.report({'WARNING'}, "No character armature found for light targeting!")
+            self.report({'WARNING'}, "No character armature or clone found for light targeting!")
             return {'CANCELLED'}
             
-        # Get head location
+        context.view_layer.update()
+        
+        # Get head / chest world position
         from ..utils.naming import get_control_name
         head_bone = obj.pose.bones.get(get_control_name("head"))
+        chest_bone = obj.pose.bones.get(get_control_name("chest"))
+        
         if head_bone:
-            head_pos = obj.matrix_world @ head_bone.head
+            target_pos = obj.matrix_world @ head_bone.head
+        elif chest_bone:
+            target_pos = obj.matrix_world @ chest_bone.head
         else:
-            head_pos = obj.location.copy()
-            head_pos.z += 1.6 # Average height
+            target_pos = obj.matrix_world.translation + mathutils.Vector((0, 0, 1.6))
             
-        # Clear existing lighting rig if it exists
-        rig_lights_prefix = "Rig_Light_"
-        for l in list(scene.objects):
-            if l.name.startswith(rig_lights_prefix):
+        # Target empty for lights to track smoothly
+        target_name = f"Light_Target_{obj.name}"
+        t_obj = bpy.data.objects.get(target_name)
+        if not t_obj:
+            t_obj = bpy.data.objects.new(target_name, None)
+            t_obj.empty_display_type = 'SPHERE'
+            t_obj.empty_display_size = 0.08
+            scene.collection.objects.link(t_obj)
+            
+        t_obj.location = target_pos
+        t_obj.parent = obj
+        if head_bone:
+            t_obj.parent_type = 'BONE'
+            t_obj.parent_bone = get_control_name("head")
+            head_world_mat = obj.matrix_world @ head_bone.matrix
+            t_obj.location = head_world_mat.inverted() @ target_pos
+        else:
+            t_obj.parent_type = 'OBJECT'
+            t_obj.location = obj.matrix_world.inverted() @ target_pos
+        t_obj.matrix_parent_inverse.identity()
+        
+        # Collection for lighting
+        coll_name = f"Studio_Lights_{obj.name}"
+        light_coll = bpy.data.collections.get(coll_name)
+        if not light_coll:
+            light_coll = bpy.data.collections.new(coll_name)
+            context.scene.collection.children.link(light_coll)
+            
+        # Clear previous lights in this collection
+        for l in list(light_coll.objects):
+            if l.type == 'LIGHT':
                 bpy.data.objects.remove(l, do_unlink=True)
                 
         mood = scene.hrg_light_mood
         
-        # Setup lights based on mood
+        # Mood color & intensity palettes
         if mood == 'STUDIO':
-            # Neutral white studio area lights
-            key_color = (1.0, 1.0, 1.0)
-            fill_color = (0.9, 0.9, 0.9)
+            key_color = (1.0, 0.98, 0.95)
+            fill_color = (0.85, 0.90, 1.0)
             rim_color = (1.0, 1.0, 1.0)
-            key_power, fill_power, rim_power = 150.0, 60.0, 100.0
+            key_power, fill_power, rim_power = 200.0, 75.0, 150.0
         elif mood == 'DRAMATIC':
-            # Warm key, cool fill, strong rim
-            key_color = (1.0, 0.85, 0.7)
-            fill_color = (0.7, 0.85, 1.0)
+            key_color = (1.0, 0.82, 0.65)
+            fill_color = (0.55, 0.75, 1.0)
             rim_color = (1.0, 1.0, 1.0)
-            key_power, fill_power, rim_power = 250.0, 40.0, 300.0
+            key_power, fill_power, rim_power = 300.0, 40.0, 350.0
         elif mood == 'SUNNY':
-            # Bright warm sunlight, sky blue fill
-            key_color = (1.0, 0.95, 0.8)
-            fill_color = (0.6, 0.75, 1.0)
-            rim_color = (1.0, 0.98, 0.9)
-            key_power, fill_power, rim_power = 400.0, 100.0, 150.0
+            key_color = (1.0, 0.95, 0.80)
+            fill_color = (0.60, 0.80, 1.0)
+            rim_color = (1.0, 0.98, 0.90)
+            key_power, fill_power, rim_power = 450.0, 120.0, 200.0
         elif mood == 'HORROR':
-            # Cool dark green underlight
-            key_color = (0.4, 0.7, 0.5)
-            fill_color = (0.1, 0.15, 0.2)
-            rim_color = (0.5, 0.5, 0.6)
-            key_power, fill_power, rim_power = 100.0, 10.0, 120.0
+            key_color = (0.35, 0.75, 0.50)
+            fill_color = (0.10, 0.15, 0.25)
+            rim_color = (0.60, 0.60, 0.70)
+            key_power, fill_power, rim_power = 150.0, 15.0, 160.0
         else: # NEON
-            # Hot pink and cyan
-            key_color = (1.0, 0.05, 0.6) # Pink
-            fill_color = (0.05, 0.8, 1.0) # Cyan
+            key_color = (1.0, 0.05, 0.65)
+            fill_color = (0.05, 0.85, 1.0)
             rim_color = (1.0, 1.0, 1.0)
-            key_power, fill_power, rim_power = 300.0, 150.0, 400.0
+            key_power, fill_power, rim_power = 350.0, 180.0, 450.0
             
+        rig_prefix = f"Rig_Light_{obj.name}_"
+        
         # Spawn Key Light (Front-Right-High)
-        self.create_light(scene, f"{rig_lights_prefix}Key", 'AREA', head_pos + mathutils.Vector((1.2, 1.5, 1.0)), head_pos, key_color, key_power, size=1.5)
+        self.create_studio_light(light_coll, f"{rig_prefix}Key", 'AREA', target_pos + mathutils.Vector((1.5, -1.8, 1.2)), t_obj, key_color, key_power, size=1.8)
         
         # Spawn Fill Light (Front-Left-Low)
-        self.create_light(scene, f"{rig_lights_prefix}Fill", 'AREA', head_pos + mathutils.Vector((-1.5, 1.2, 0.2)), head_pos, fill_color, fill_power, size=2.0)
+        self.create_studio_light(light_coll, f"{rig_prefix}Fill", 'AREA', target_pos + mathutils.Vector((-2.0, -1.5, 0.4)), t_obj, fill_color, fill_power, size=2.5)
         
-        # Spawn Rim Light (Behind-High)
-        self.create_light(scene, f"{rig_lights_prefix}Rim", 'SPOT', head_pos + mathutils.Vector((-0.2, -1.8, 1.8)), head_pos, rim_color, rim_power, spot_size=0.6)
+        # Spawn Rim / Hair Light (Behind-High)
+        self.create_studio_light(light_coll, f"{rig_prefix}Rim", 'SPOT', target_pos + mathutils.Vector((-0.3, 2.0, 1.8)), t_obj, rim_color, rim_power, spot_size=0.6)
         
-        self.report({'INFO'}, f"Generated Three-Point Auto-Lighting Rig ({mood})!")
+        self.report({'INFO'}, f"Generated Studio 3-Point Lighting ({mood}) for '{obj.name}' with live tracking!")
         return {'FINISHED'}
         
-    def create_light(self, scene, name, l_type, pos, target, color, power, size=1.0, spot_size=0.7):
-        # Create light data
+    def create_studio_light(self, coll, name, l_type, pos, target_empty, color, power, size=1.5, spot_size=0.6):
         l_data = bpy.data.lights.new(name=f"{name}_Data", type=l_type)
         l_data.color = color
         
-        # Set light energy/power based on type
         if l_type == 'AREA':
             l_data.energy = power
             l_data.size = size
@@ -2287,13 +2333,14 @@ class OBJECT_OT_setup_auto_lighting(bpy.types.Operator):
             l_data.energy = power
             
         l_obj = bpy.data.objects.new(name=name, object_data=l_data)
-        scene.collection.objects.link(l_obj)
+        coll.objects.link(l_obj)
         l_obj.location = pos
         
-        # Orient to target
-        direction = target - pos
-        rot_quat = direction.to_track_quat('-Z', 'Y')
-        l_obj.rotation_euler = rot_quat.to_euler()
+        # Dynamic Track To target empty
+        track = l_obj.constraints.new(type='TRACK_TO')
+        track.target = target_empty
+        track.track_axis = 'TRACK_NEGATIVE_Z'
+        track.up_axis = 'UP_Y'
 
 class OBJECT_OT_apply_face_expression(bpy.types.Operator):
     """Applies a facial expression preset dynamically to the character's facial joints."""
