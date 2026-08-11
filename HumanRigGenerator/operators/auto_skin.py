@@ -81,20 +81,32 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                 if vg_hand and torso_verts:
                     vg_hand.remove(torso_verts)
                     
-        # 4. Neck & Head Isolation (neck/head NEVER deform chest, ribs, or shoulder blades)
+        # 4. Neck, Head & Jaw Isolation (neck/head/jaw NEVER deform chest, ribs, or shoulder blades)
         neck_pb = rig_obj.pose.bones.get("DEF-neck")
         head_pb = rig_obj.pose.bones.get("DEF-head")
+        jaw_pb = rig_obj.pose.bones.get("DEF-jaw")
         if neck_pb:
             n_head_z = (rig_obj.matrix_world @ neck_pb.head).z
             vg_neck = mesh_obj.vertex_groups.get("DEF-neck")
             vg_head = mesh_obj.vertex_groups.get("DEF-head")
+            vg_jaw = mesh_obj.vertex_groups.get("DEF-jaw")
             
-            below_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.02]
+            below_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015]
             if below_neck:
                 if vg_neck:
                     vg_neck.remove(below_neck)
                 if vg_head:
                     vg_head.remove(below_neck)
+                if vg_jaw:
+                    vg_jaw.remove(below_neck)
+                    
+            # Jaw strictly limited to jaw/chin
+            if jaw_pb and vg_jaw:
+                j_head_z = (rig_obj.matrix_world @ jaw_pb.head).z
+                j_head_y = (rig_obj.matrix_world @ jaw_pb.head).y
+                not_jaw = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < j_head_z - 0.04 or (mw @ v.co).y < j_head_y - 0.05]
+                if not_jaw:
+                    vg_jaw.remove(not_jaw)
                     
         if log_file:
             log_file.write(f"Completed clean limb bleed isolation on mesh '{mesh_obj.name}'.\n")
@@ -1253,21 +1265,21 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
                             
                 elif c['is_shirt']:
                     # Shirt interior:
-                    # 1. Protect Hands/Forearms: If |X| is beyond sleeve opening, NEVER mask!
+                    # 1. Protect Hands/Forearms/Upper Arms: If |X| is near or beyond sleeve opening, NEVER mask!
                     max_sleeve_x = max(abs(c['x_min']), abs(c['x_max']))
-                    if abs(v_world.x) >= max_sleeve_x - 0.03:
-                        continue # Outside sleeve opening (arms/hands protected)
+                    if abs(v_world.x) >= max_sleeve_x - 0.075:
+                        continue # Arms, wrists, hands 100% protected
                         
-                    # 2. Protect Neck/Head: If Z is near or above collar, NEVER mask!
-                    if v_world.z >= c['z_max'] - 0.04 and abs(v_world.x) < 0.12:
-                        continue # Neck / chin protected
+                    # 2. Protect Neck/Head/Collar: If Z is near or above collar, NEVER mask!
+                    if v_world.z >= c['z_max'] - 0.055 and abs(v_world.x) < 0.14:
+                        continue # Neck / chin 100% protected
                         
                     # 3. Protect Waist bottom: If Z is below waist opening, NEVER mask!
-                    if v_world.z <= c['z_min'] + 0.03:
+                    if v_world.z <= c['z_min'] + 0.035:
                         continue # Waist bottom protected
                         
                     loc, n, idx, dist = c['tree'].find_nearest(v_world)
-                    if dist is not None and dist < 0.045:
+                    if dist is not None and dist < 0.040:
                         is_under_cloth = True
                         break
                         
