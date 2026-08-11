@@ -967,9 +967,35 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             self.report({'WARNING'}, "Could not detect body mesh! Please select both Clothing and Body mesh together.")
             return {'CANCELLED'}
             
-        # Enable Preserve Volume on body mesh armature modifier
+        # 1. Reset any active Armature rig to Rest Pose temporarily for clean weight baking
+        active_arm = None
         for mod in body_obj.modifiers:
-            if mod.type == 'ARMATURE':
+            if mod.type == 'ARMATURE' and mod.object:
+                active_arm = mod.object
+                break
+                
+        if not active_arm:
+            for o in context.scene.objects:
+                if o.type == 'ARMATURE':
+                    active_arm = o
+                    break
+                    
+        current_mode = context.mode
+        if active_arm and context.view_layer.objects.get(active_arm.name):
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.ops.object.select_all(action='DESELECT')
+            active_arm.select_set(True)
+            context.view_layer.objects.active = active_arm
+            bpy.ops.object.mode_set(mode='POSE')
+            bpy.ops.pose.select_all(action='SELECT')
+            bpy.ops.pose.transforms_clear()
+            bpy.ops.object.mode_set(mode='OBJECT')
+            
+        # Clean any bad modifiers from body mesh
+        for mod in list(body_obj.modifiers):
+            if mod.type in ['DATA_TRANSFER', 'SHRINKWRAP']:
+                body_obj.modifiers.remove(mod)
+            elif mod.type == 'ARMATURE':
                 mod.use_deform_preserve_volume = True
                 
         fixed_count = 0
@@ -977,52 +1003,63 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             if cloth == body_obj:
                 continue
                 
-            # 1. Clean up any bad shrinkwrap modifiers that suck the cloth into the skin
+            # Clean old modifier artifacts
             for m in list(cloth.modifiers):
-                if m.type == 'SHRINKWRAP' or "Cloth_No_Clip" in m.name or "HRG_Cloth" in m.name:
+                if m.type in ['SHRINKWRAP', 'DATA_TRANSFER', 'MASK'] or "Cloth_No_Clip" in m.name or "HRG_" in m.name:
                     cloth.modifiers.remove(m)
-                
-            # 2. Enable Preserve Volume on clothing armature modifier
-            for mod in cloth.modifiers:
-                if mod.type == 'ARMATURE':
-                    mod.use_deform_preserve_volume = True
-                
-            # 3. Add clean Data Transfer Modifier with Nearest Face Interpolated mapping
-            dt_mod_name = "HRG_Weight_Transfer"
-            dt_mod = cloth.modifiers.get(dt_mod_name)
-            if not dt_mod:
-                dt_mod = cloth.modifiers.new(name=dt_mod_name, type='DATA_TRANSFER')
-                
+                    
+            # 2. Add Data Transfer Modifier and bake in Rest Pose
+            dt_mod = cloth.modifiers.new(name="HRG_Weight_Bake", type='DATA_TRANSFER')
             dt_mod.object = body_obj
             dt_mod.use_vert_data = True
             dt_mod.data_types_verts = {'VGROUP_WEIGHTS'}
             dt_mod.vert_mapping = 'POLYINTERP_NEAREST'
             
-            # Position Data Transfer modifier before Armature
-            arm_idx = -1
-            for idx, m in enumerate(cloth.modifiers):
-                if m.type == 'ARMATURE':
-                    arm_idx = idx
-                    break
-            if arm_idx > 0:
-                try:
-                    cloth.modifiers.move(cloth.modifiers.find(dt_mod.name), 0)
-                except Exception:
-                    pass
-                    
-            # Auto-generate Data Layers so vertex weights are immediately active
             bpy.ops.object.select_all(action='DESELECT')
             cloth.select_set(True)
             context.view_layer.objects.active = cloth
+            
             try:
                 bpy.ops.object.datalayout_transfer(modifier=dt_mod.name)
             except Exception:
                 pass
+                
+            try:
+                bpy.ops.object.modifier_apply(modifier=dt_mod.name)
+            except Exception:
+                pass
+                
+            # 3. Ensure clean Armature modifier with Preserve Volume
+            arm_mod = None
+            for m in cloth.modifiers:
+                if m.type == 'ARMATURE':
+                    arm_mod = m
+                    break
+            if not arm_mod and active_arm:
+                arm_mod = cloth.modifiers.new(name="Armature", type='ARMATURE')
+                arm_mod.object = active_arm
+                
+            if arm_mod:
+                arm_mod.use_deform_preserve_volume = True
+                # Move Armature to top of stack
+                cloth_arm_idx = cloth.modifiers.find(arm_mod.name)
+                if cloth_arm_idx > 0:
+                    try:
+                        cloth.modifiers.move(cloth_arm_idx, 0)
+                    except Exception:
+                        pass
                     
             fixed_count += 1
             
+        # Put back in Pose mode if rig exists
+        if active_arm and context.view_layer.objects.get(active_arm.name):
+            bpy.ops.object.select_all(action='DESELECT')
+            active_arm.select_set(True)
+            context.view_layer.objects.active = active_arm
+            bpy.ops.object.mode_set(mode='POSE')
+            
         context.view_layer.update()
-        self.report({'INFO'}, f"Synced weights and generated data layers for {fixed_count} clothing mesh(es) to '{body_obj.name}'!")
+        self.report({'INFO'}, f"Cleanly baked & synchronized weights for {fixed_count} clothing mesh(es) to '{body_obj.name}'!")
         return {'FINISHED'}
 
 class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
