@@ -1099,20 +1099,28 @@ class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
             v_world = mw_body @ v.co
             is_under_cloth = False
             
-            # Check BVH proximity with generous 75mm margin for inner thigh & crotch folds
-            for cloth, tree in cloth_trees:
+            for (cloth, tree), (_, z_min, z_max) in zip(cloth_trees, cloth_z_ranges):
+                c_name = cloth.name.lower()
+                is_pants = any(k in c_name for k in ["pant", "paint", "short", "trouser", "jean", "boxer", "underwear"])
+                is_shirt = any(k in c_name for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt"])
+                
+                # Check height bounds: Keep bottom leg hem and waist open so knees never get cut off
+                if is_pants:
+                    if not ((z_min + 0.045) <= v_world.z <= (z_max - 0.02)):
+                        continue
+                elif is_shirt:
+                    if not ((z_min + 0.03) <= v_world.z <= (z_max - 0.03)):
+                        continue
+                        
                 loc, normal, face_idx, dist = tree.find_nearest(v_world)
-                if dist is not None and dist < 0.075:
+                if dist is not None and dist < 0.055:
                     is_under_cloth = True
                     break
                     
-            # Check pants/shorts height containment for inner groin/thigh center vertices
-            if not is_under_cloth:
-                for cloth, z_min, z_max in cloth_z_ranges:
-                    if any(k in cloth.name.lower() for k in ["pant", "paint", "short", "trouser", "jean", "boxer", "underwear"]):
-                        if z_min + 0.03 <= v_world.z <= z_max - 0.02 and abs(v_world.x) < 0.12:
-                            is_under_cloth = True
-                            break
+                # Groin / inner thigh center fold fallback
+                if is_pants and abs(v_world.x) < 0.09 and (z_min + 0.055) <= v_world.z <= (z_max - 0.03):
+                    is_under_cloth = True
+                    break
                     
             if is_under_cloth:
                 hidden_indices.append(v.index)
