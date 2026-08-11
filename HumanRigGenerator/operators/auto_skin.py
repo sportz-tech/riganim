@@ -671,8 +671,22 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                                     vg.remove([v.index])
                                 cleaned_right += 1
                     log_file.write(f"Symmetrical cleanup: removed cross-leg weight bleed for {cleaned_left} left and {cleaned_right} right vertices.\n")
-                except Exception as e_sym:
-                    log_file.write(f"Symmetrical cleanup failed: {e_sym}\n")
+                # Spine and Pelvis weight de-pinching
+                try:
+                    pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
+                    spine_pb = rig_obj.pose.bones.get("DEF-spine")
+                    if pelvis_pb and spine_pb:
+                        p_head_z = (rig_obj.matrix_world @ pelvis_pb.head).z
+                        vg_pelvis = mesh_obj.vertex_groups.get("DEF-pelvis")
+                        if vg_pelvis:
+                            mw = mesh_obj.matrix_world
+                            # Clear DEF-pelvis from upper waist / abdomen above pelvis head + 0.025
+                            upper_waist = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > p_head_z + 0.025]
+                            if upper_waist:
+                                vg_pelvis.remove(upper_waist)
+                                log_file.write(f"Removed DEF-pelvis bleed from {len(upper_waist)} upper waist vertices to prevent twisting/pinching.\n")
+                except Exception as e_spine:
+                    log_file.write(f"Spine de-pinching failed: {e_spine}\n")
                     
                 # Foot and Toe weight cleanup
                 try:
