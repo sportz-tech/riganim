@@ -81,6 +81,21 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                 if vg_hand and torso_verts:
                     vg_hand.remove(torso_verts)
                     
+        # 4. Neck & Head Isolation (neck/head NEVER deform chest, ribs, or shoulder blades)
+        neck_pb = rig_obj.pose.bones.get("DEF-neck")
+        head_pb = rig_obj.pose.bones.get("DEF-head")
+        if neck_pb:
+            n_head_z = (rig_obj.matrix_world @ neck_pb.head).z
+            vg_neck = mesh_obj.vertex_groups.get("DEF-neck")
+            vg_head = mesh_obj.vertex_groups.get("DEF-head")
+            
+            below_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.02]
+            if below_neck:
+                if vg_neck:
+                    vg_neck.remove(below_neck)
+                if vg_head:
+                    vg_head.remove(below_neck)
+                    
         if log_file:
             log_file.write(f"Completed clean limb bleed isolation on mesh '{mesh_obj.name}'.\n")
     except Exception as e:
