@@ -1,6 +1,92 @@
 # operators/auto_skin.py
 import bpy
 
+def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
+    """Isolates limb weights (arms, forearms, hands, thighs) to prevent pulling the chest, back, waist, and spine."""
+    if not (mesh_obj and mesh_obj.type == 'MESH' and rig_obj and rig_obj.type == 'ARMATURE'):
+        return
+        
+    try:
+        mw = mesh_obj.matrix_world
+        pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
+        center_x = (rig_obj.matrix_world @ pelvis_pb.head).x if pelvis_pb else 0.0
+        
+        l_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.L")
+        left_is_positive_x = True
+        if l_thigh_pb:
+            left_is_positive_x = ((rig_obj.matrix_world @ l_thigh_pb.head).x > center_x)
+            
+        # 1. Symmetrical left/right leg cross-bleed cleanup
+        vg_left = [vg for vg in mesh_obj.vertex_groups if vg.name.endswith(".L")]
+        vg_right = [vg for vg in mesh_obj.vertex_groups if vg.name.endswith(".R")]
+        for v in mesh_obj.data.vertices:
+            vw_x = (mw @ v.co).x
+            if abs(vw_x - center_x) > 0.01:
+                is_on_left = (vw_x > center_x) if left_is_positive_x else (vw_x < center_x)
+                if is_on_left:
+                    for vg in vg_right:
+                        vg.remove([v.index])
+                else:
+                    for vg in vg_left:
+                        vg.remove([v.index])
+                        
+        # 2. Thigh & Pelvis weight isolation (never touch waist/spine)
+        if pelvis_pb:
+            p_head_z = (rig_obj.matrix_world @ pelvis_pb.head).z
+            vg_pelvis = mesh_obj.vertex_groups.get("DEF-pelvis")
+            if vg_pelvis:
+                upper_waist = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > p_head_z + 0.015]
+                if upper_waist:
+                    vg_pelvis.remove(upper_waist)
+                    
+        for side in [".L", ".R"]:
+            thigh_pb = rig_obj.pose.bones.get(f"DEF-thigh{side}")
+            vg_thigh = mesh_obj.vertex_groups.get(f"DEF-thigh{side}")
+            if thigh_pb and vg_thigh:
+                t_head_z = (rig_obj.matrix_world @ thigh_pb.head).z
+                above_hip = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > t_head_z + 0.01]
+                if above_hip:
+                    vg_thigh.remove(above_hip)
+                    
+        # 3. Arm & Shoulder Complete Torso Isolation (arms NEVER deform chest, ribs, back, or shoulder blades)
+        for side in [".L", ".R"]:
+            uarm_pb = rig_obj.pose.bones.get(f"DEF-upper_arm{side}")
+            vg_uarm = mesh_obj.vertex_groups.get(f"DEF-upper_arm{side}")
+            vg_farm = mesh_obj.vertex_groups.get(f"DEF-forearm{side}")
+            vg_hand = mesh_obj.vertex_groups.get(f"DEF-hand{side}")
+            
+            if uarm_pb:
+                sh_head = rig_obj.matrix_world @ uarm_pb.head
+                is_left = (side == ".L" and left_is_positive_x) or (side == ".R" and not left_is_positive_x)
+                
+                # Check each vertex: if it is part of the torso (chest, back, or side ribcage), remove arm weights
+                torso_verts = []
+                for v in mesh_obj.data.vertices:
+                    vw = mw @ v.co
+                    # Inward distance from shoulder socket towards center spine
+                    inward_dist = (sh_head.x - vw.x) if is_left else (vw.x - sh_head.x)
+                    
+                    # Any vertex inward towards torso, below armpit, or on the back/shoulder blade
+                    is_inward = (inward_dist > 0.01)
+                    is_below_armpit = (vw.z < sh_head.z - 0.05) and (inward_dist > -0.04)
+                    is_back_torso = (vw.y < sh_head.y + 0.05) and (inward_dist > -0.04)
+                    
+                    if is_inward or is_below_armpit or is_back_torso:
+                        torso_verts.append(v.index)
+                        
+                if vg_uarm and torso_verts:
+                    vg_uarm.remove(torso_verts)
+                if vg_farm and torso_verts:
+                    vg_farm.remove(torso_verts)
+                if vg_hand and torso_verts:
+                    vg_hand.remove(torso_verts)
+                    
+        if log_file:
+            log_file.write(f"Completed clean limb bleed isolation on mesh '{mesh_obj.name}'.\n")
+    except Exception as e:
+        if log_file:
+            log_file.write(f"Limb bleed isolation failed on '{mesh_obj.name}': {e}\n")
+
 class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
     """Automatically skins/binds the selected mesh to the generated rig with automatic weight painting."""
     bl_idname = "object.auto_skin_mesh"
@@ -640,104 +726,8 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                 except Exception as e_lids:
                     log_file.write(f"Eyelid weight painting failed: {e_lids}\n")
                     
-                # Symmetrical limb weight cleanup
-                try:
-                    pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
-                    center_x = 0.0
-                    if pelvis_pb:
-                        center_x = (rig_obj.matrix_world @ pelvis_pb.head).x
-                    left_is_positive_x = True
-                    l_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.L")
-                    if l_thigh_pb:
-                        l_thigh_x = (rig_obj.matrix_world @ l_thigh_pb.head).x
-                        left_is_positive_x = (l_thigh_x > center_x)
-                        
-                    vg_left = [vg for vg in mesh_obj.vertex_groups if vg.name.endswith(".L")]
-                    vg_right = [vg for vg in mesh_obj.vertex_groups if vg.name.endswith(".R")]
-                    
-                    cleaned_left = 0
-                    cleaned_right = 0
-                    mw = mesh_obj.matrix_world
-                    for v in mesh_obj.data.vertices:
-                        v_world_x = (mw @ v.co).x
-                        if abs(v_world_x - center_x) > 0.01:
-                            is_on_left_side = (v_world_x > center_x) if left_is_positive_x else (v_world_x < center_x)
-                            if is_on_left_side:
-                                for vg in vg_right:
-                                    vg.remove([v.index])
-                                cleaned_left += 1
-                            else:
-                                for vg in vg_left:
-                                    vg.remove([v.index])
-                                cleaned_right += 1
-                    log_file.write(f"Symmetrical cleanup: removed cross-leg weight bleed for {cleaned_left} left and {cleaned_right} right vertices.\n")
-                except Exception as e_sym:
-                    log_file.write(f"Symmetrical cleanup failed: {e_sym}\n")
-                    
-                # Thigh, Spine and Pelvis weight de-pinching & isolation
-                try:
-                    pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
-                    spine_pb = rig_obj.pose.bones.get("DEF-spine")
-                    l_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.L")
-                    r_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.R")
-                    
-                    mw = mesh_obj.matrix_world
-                    if pelvis_pb:
-                        p_head_z = (rig_obj.matrix_world @ pelvis_pb.head).z
-                        vg_pelvis = mesh_obj.vertex_groups.get("DEF-pelvis")
-                        if vg_pelvis:
-                            # Clear DEF-pelvis from upper waist / abdomen above pelvis head + 0.015
-                            upper_waist = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > p_head_z + 0.015]
-                            if upper_waist:
-                                vg_pelvis.remove(upper_waist)
-                                log_file.write(f"Removed DEF-pelvis bleed from {len(upper_waist)} upper waist vertices.\n")
-                                
-                    # Clamp Thigh bones so moving legs NEVER pulls or twists the waist/spine
-                    for side, pb in [(".L", l_thigh_pb), (".R", r_thigh_pb)]:
-                        vg_thigh = mesh_obj.vertex_groups.get(f"DEF-thigh{side}")
-                        if pb and vg_thigh:
-                            t_head_z = (rig_obj.matrix_world @ pb.head).z
-                            # Vertices above thigh hip joint belong to pelvis/spine, NOT thigh
-                            above_hip = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > t_head_z + 0.01]
-                            if above_hip:
-                                vg_thigh.remove(above_hip)
-                                log_file.write(f"Removed DEF-thigh{side} bleed from {len(above_hip)} waist/spine vertices.\n")
-                                
-                    # Clamp Upper Arm bones so moving/rotating arms NEVER pulls the chest, ribs, or spine
-                    for side in [".L", ".R"]:
-                        uarm_pb = rig_obj.pose.bones.get(f"DEF-upper_arm{side}")
-                        vg_uarm = mesh_obj.vertex_groups.get(f"DEF-upper_arm{side}")
-                        vg_farm = mesh_obj.vertex_groups.get(f"DEF-forearm{side}")
-                        vg_hand = mesh_obj.vertex_groups.get(f"DEF-hand{side}")
-                        
-                        if uarm_pb and vg_uarm:
-                            sh_head = rig_obj.matrix_world @ uarm_pb.head
-                            is_left = (side == ".L" and left_is_positive_x) or (side == ".R" and not left_is_positive_x)
-                            
-                            torso_verts = []
-                            for v in mesh_obj.data.vertices:
-                                vw = mw @ v.co
-                                # Check if vertex is inside the torso / ribcage (inward towards chest or below armpit)
-                                if is_left:
-                                    if vw.x < (sh_head.x - 0.035) or (vw.z < (sh_head.z - 0.08) and vw.x < sh_head.x):
-                                        torso_verts.append(v.index)
-                                else:
-                                    if vw.x > (sh_head.x + 0.035) or (vw.z < (sh_head.z - 0.08) and vw.x > sh_head.x):
-                                        torso_verts.append(v.index)
-                                        
-                            if torso_verts:
-                                vg_uarm.remove(torso_verts)
-                                log_file.write(f"Removed DEF-upper_arm{side} bleed from {len(torso_verts)} chest/ribcage vertices.\n")
-                                
-                            # Strip any forearm / hand weight bleed from torso
-                            center_torso = [v.index for v in mesh_obj.data.vertices if abs((mw @ v.co).x - center_x) < 0.12]
-                            if center_torso:
-                                if vg_farm:
-                                    vg_farm.remove(center_torso)
-                                if vg_hand:
-                                    vg_hand.remove(center_torso)
-                except Exception as e_spine:
-                    log_file.write(f"Spine/Limb de-pinching failed: {e_spine}\n")
+                # Isolated limb weight and spine cleanup across mesh
+                cleanup_limb_bleed(mesh_obj, rig_obj, log_file)
                     
                 # Foot and Toe weight cleanup
                 try:
@@ -1128,6 +1118,10 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
                         cloth.modifiers.move(cloth_arm_idx, 0)
                     except Exception:
                         pass
+                        
+            # 4. Strip any arm/leg bleed from clothing torso/back/waist
+            if active_arm:
+                cleanup_limb_bleed(cloth, active_arm)
                     
             fixed_count += 1
             
