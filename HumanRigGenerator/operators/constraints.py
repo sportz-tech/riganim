@@ -236,18 +236,17 @@ def setup_eye_constraints(obj):
                 description=f"Close {'Left' if side == '.L' else 'Right'} Eye"
             )
             
-    # Add Track To constraints on ORG-eye.L and ORG-eye.R targeting CTRL-eye_look.L and CTRL-eye_look.R
+    # Add Damped Track constraints on ORG-eye.L and ORG-eye.R targeting CTRL-eye_look.L and CTRL-eye_look.R
     for side in [".L", ".R"]:
         org_eye = obj.pose.bones.get(get_org_name(f"eye{side}"))
         ctrl_look = get_control_name(f"eye_look{side}")
         if org_eye and obj.pose.bones.get(ctrl_look):
             for c in list(org_eye.constraints):
-                if c.name == "Track_To_Target":
+                if c.name in ["Track_To_Target", "Damped_Track_Target"]:
                     org_eye.constraints.remove(c)
                     
-            c = add_constraint(org_eye, 'TRACK_TO', "Track_To_Target", obj, target_bone=ctrl_look)
+            c = add_constraint(org_eye, 'DAMPED_TRACK', "Damped_Track_Target", obj, target_bone=ctrl_look)
             c.track_axis = 'TRACK_Y'
-            c.up_axis = 'UP_Z'
             
     # Add drivers to upper and lower 3-bone curved eyelids rotation around local X axis
     for side in [".L", ".R"]:
