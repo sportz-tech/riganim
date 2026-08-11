@@ -768,7 +768,13 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                         if c:
                             c.enabled = enabled
                             
-        self.report({'INFO'}, f"Successfully auto-skinned {len(selected_meshes)} meshes to rig '{rig_obj.name}'!")
+        # Enable Preserve Volume (Dual Quaternion Skinning) on all meshes to prevent volume loss during leg/arm stretching
+        for m_obj in selected_meshes:
+            for mod in m_obj.modifiers:
+                if mod.type == 'ARMATURE':
+                    mod.use_deform_preserve_volume = True
+                            
+        self.report({'INFO'}, f"Successfully auto-skinned {len(selected_meshes)} meshes to rig '{rig_obj.name}' with Preserve Volume enabled!")
         
         # Write diagnostic log for the active mesh
         diag_path = "f:\\blenderaddon\\HumanRigGenerator\\auto_skin_diagnostic.log"
@@ -952,10 +958,20 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             self.report({'WARNING'}, "Could not detect body mesh! Please select both Clothing and Body mesh together.")
             return {'CANCELLED'}
             
+        # Enable Preserve Volume on body mesh armature modifier
+        for mod in body_obj.modifiers:
+            if mod.type == 'ARMATURE':
+                mod.use_deform_preserve_volume = True
+                
         fixed_count = 0
         for cloth in clothing_objs:
             if cloth == body_obj:
                 continue
+                
+            # Enable Preserve Volume on clothing armature modifier
+            for mod in cloth.modifiers:
+                if mod.type == 'ARMATURE':
+                    mod.use_deform_preserve_volume = True
                 
             # 1. Add Data Transfer Modifier to transfer smooth vertex weights
             dt_mod_name = "HRG_Weight_Transfer"
@@ -968,14 +984,14 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             dt_mod.data_types_verts = {'VGROUP_WEIGHTS'}
             dt_mod.vert_mapping = 'NEAREST'
             
-            # 2. Add Shrinkwrap Modifier to prevent penetration
+            # 2. Add Shrinkwrap Modifier to prevent penetration during leg stretch
             sw_mod_name = "HRG_Cloth_No_Clip"
             sw_mod = cloth.modifiers.get(sw_mod_name)
             if not sw_mod:
                 sw_mod = cloth.modifiers.new(name=sw_mod_name, type='SHRINKWRAP')
                 
             sw_mod.target = body_obj
-            sw_mod.offset = self.offset_distance
+            sw_mod.offset = max(0.002, self.offset_distance)
             
             # Position Shrinkwrap after Armature modifier
             arm_idx = -1
@@ -992,7 +1008,7 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             fixed_count += 1
             
         context.view_layer.update()
-        self.report({'INFO'}, f"Successfully fixed clothing clipping for {fixed_count} mesh(es) matching body '{body_obj.name}'!")
+        self.report({'INFO'}, f"Successfully fixed clothing clipping & enabled Preserve Volume for {fixed_count} mesh(es) matching '{body_obj.name}'!")
         return {'FINISHED'}
 
 class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
