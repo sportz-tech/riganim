@@ -48,49 +48,65 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                 if above_hip:
                     vg_thigh.remove(above_hip)
                     
-        # 3. Arm & Shoulder Complete Torso Isolation (arms NEVER deform chest, ribs, back, or shoulder blades)
+        # 3. Arm & Shoulder Complete Torso Isolation (arms smoothly deform deltoid but NEVER chest/ribcage)
         for side in [".L", ".R"]:
             uarm_pb = rig_obj.pose.bones.get(f"DEF-upper_arm{side}")
+            sh_pb = rig_obj.pose.bones.get(f"DEF-shoulder{side}")
             vg_uarm = mesh_obj.vertex_groups.get(f"DEF-upper_arm{side}")
+            vg_sh = mesh_obj.vertex_groups.get(f"DEF-shoulder{side}")
             vg_farm = mesh_obj.vertex_groups.get(f"DEF-forearm{side}")
             vg_hand = mesh_obj.vertex_groups.get(f"DEF-hand{side}")
+            vg_chest = mesh_obj.vertex_groups.get("DEF-spine.003")
             
-            if uarm_pb:
+            if uarm_pb and vg_uarm:
                 sh_head = rig_obj.matrix_world @ uarm_pb.head
                 is_left = (side == ".L" and left_is_positive_x) or (side == ".R" and not left_is_positive_x)
                 
-                # Check each vertex: if it is part of the torso (chest, back, or side ribcage), remove arm weights
-                torso_verts = []
+                # Check each vertex: if it is inside deep chest or deep ribcage, remove arm weights and transfer to chest
+                deep_chest_verts = []
                 for v in mesh_obj.data.vertices:
                     vw = mw @ v.co
                     # Inward distance from shoulder socket towards center spine
                     inward_dist = (sh_head.x - vw.x) if is_left else (vw.x - sh_head.x)
                     
-                    # Any vertex inward towards torso, below armpit, or on the back/shoulder blade
-                    is_inward = (inward_dist > 0.01)
-                    is_below_armpit = (vw.z < sh_head.z - 0.05) and (inward_dist > -0.04)
-                    is_back_torso = (vw.y < sh_head.y + 0.05) and (inward_dist > -0.04)
+                    # Deltoid cap (inward_dist <= 0.04m) is smoothly preserved!
+                    # Only deep chest/sternum (inward_dist > 0.045m) or deep under-armpit (below armpit and inward) is stripped
+                    is_deep_chest = (inward_dist > 0.045)
+                    is_deep_ribs = (vw.z < sh_head.z - 0.08) and (inward_dist > 0.02)
+                    is_deep_back = (vw.y < sh_head.y - 0.04) and (inward_dist > 0.035)
                     
-                    if is_inward or is_below_armpit or is_back_torso:
-                        torso_verts.append(v.index)
+                    if is_deep_chest or is_deep_ribs or is_deep_back:
+                        deep_chest_verts.append(v.index)
                         
-                if vg_uarm and torso_verts:
-                    vg_uarm.remove(torso_verts)
-                if vg_farm and torso_verts:
-                    vg_farm.remove(torso_verts)
-                if vg_hand and torso_verts:
-                    vg_hand.remove(torso_verts)
+                if deep_chest_verts:
+                    vg_uarm.remove(deep_chest_verts)
+                    if vg_chest:
+                        # Ensure chest maintains 100% volume
+                        for vi in deep_chest_verts:
+                            vg_chest.add([vi], 0.8, 'ADD')
+                            
+                # Strip forearm and hand from entire torso
+                center_torso = [v.index for v in mesh_obj.data.vertices if abs((mw @ v.co).x - center_x) < abs(sh_head.x - center_x) - 0.02]
+                if center_torso:
+                    if vg_farm:
+                        vg_farm.remove(center_torso)
+                    if vg_hand:
+                        vg_hand.remove(center_torso)
                     
-        # 4. Neck, Head & Jaw Isolation (neck/head/jaw NEVER deform chest, ribs, or shoulder blades)
+        # 4. Neck, Head & Jaw Anatomical Weighting (throat vertices stay 100% attached to head/neck)
         neck_pb = rig_obj.pose.bones.get("DEF-neck")
         head_pb = rig_obj.pose.bones.get("DEF-head")
         jaw_pb = rig_obj.pose.bones.get("DEF-jaw")
-        if neck_pb:
+        
+        vg_neck = mesh_obj.vertex_groups.get("DEF-neck")
+        vg_head = mesh_obj.vertex_groups.get("DEF-head")
+        vg_jaw = mesh_obj.vertex_groups.get("DEF-jaw")
+        
+        if neck_pb and head_pb:
             n_head_z = (rig_obj.matrix_world @ neck_pb.head).z
-            vg_neck = mesh_obj.vertex_groups.get("DEF-neck")
-            vg_head = mesh_obj.vertex_groups.get("DEF-head")
-            vg_jaw = mesh_obj.vertex_groups.get("DEF-jaw")
+            h_head_z = (rig_obj.matrix_world @ head_pb.head).z
             
+            # Below neck joint belongs to chest, NOT neck or head
             below_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015]
             if below_neck:
                 if vg_neck:
@@ -100,14 +116,25 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                 if vg_jaw:
                     vg_jaw.remove(below_neck)
                     
-            # Jaw strictly limited to jaw/chin
+            # Jaw strictly limited to movable mandible / chin; throat vertices transfer cleanly to DEF-head / DEF-neck
             if jaw_pb and vg_jaw:
                 j_head_z = (rig_obj.matrix_world @ jaw_pb.head).z
                 j_head_y = (rig_obj.matrix_world @ jaw_pb.head).y
-                not_jaw = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < j_head_z - 0.04 or (mw @ v.co).y < j_head_y - 0.05]
+                
+                not_jaw = []
+                for v in mesh_obj.data.vertices:
+                    vw = mw @ v.co
+                    if vw.z < j_head_z - 0.035 or vw.y < j_head_y - 0.04:
+                        not_jaw.append(v.index)
+                        
                 if not_jaw:
                     vg_jaw.remove(not_jaw)
-                    
+                    if vg_head:
+                        # Transfer throat / face skin to DEF-head so no tearing occurs
+                        for vi in not_jaw:
+                            if (mw @ mesh_obj.data.vertices[vi].co).z >= n_head_z:
+                                vg_head.add([vi], 1.0, 'ADD')
+                                
         if log_file:
             log_file.write(f"Completed clean limb bleed isolation on mesh '{mesh_obj.name}'.\n")
     except Exception as e:
