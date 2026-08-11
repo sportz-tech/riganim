@@ -968,12 +968,17 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             if cloth == body_obj:
                 continue
                 
-            # Enable Preserve Volume on clothing armature modifier
+            # 1. Clean up any bad shrinkwrap modifiers that suck the cloth into the skin
+            for m in list(cloth.modifiers):
+                if m.type == 'SHRINKWRAP' or "Cloth_No_Clip" in m.name or "HRG_Cloth" in m.name:
+                    cloth.modifiers.remove(m)
+                
+            # 2. Enable Preserve Volume on clothing armature modifier
             for mod in cloth.modifiers:
                 if mod.type == 'ARMATURE':
                     mod.use_deform_preserve_volume = True
                 
-            # 1. Add Data Transfer Modifier to transfer smooth vertex weights
+            # 3. Add clean Data Transfer Modifier with Nearest Face Interpolated mapping
             dt_mod_name = "HRG_Weight_Transfer"
             dt_mod = cloth.modifiers.get(dt_mod_name)
             if not dt_mod:
@@ -982,33 +987,24 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             dt_mod.object = body_obj
             dt_mod.use_vert_data = True
             dt_mod.data_types_verts = {'VGROUP_WEIGHTS'}
-            dt_mod.vert_mapping = 'NEAREST'
+            dt_mod.vert_mapping = 'POLYINTERP_NEAREST'
             
-            # 2. Add Shrinkwrap Modifier to prevent penetration during leg stretch
-            sw_mod_name = "HRG_Cloth_No_Clip"
-            sw_mod = cloth.modifiers.get(sw_mod_name)
-            if not sw_mod:
-                sw_mod = cloth.modifiers.new(name=sw_mod_name, type='SHRINKWRAP')
-                
-            sw_mod.target = body_obj
-            sw_mod.offset = max(0.002, self.offset_distance)
-            
-            # Position Shrinkwrap after Armature modifier
+            # Position Data Transfer modifier before Armature
             arm_idx = -1
             for idx, m in enumerate(cloth.modifiers):
                 if m.type == 'ARMATURE':
                     arm_idx = idx
                     break
-            if arm_idx != -1:
+            if arm_idx > 0:
                 try:
-                    cloth.modifiers.move(cloth.modifiers.find(sw_mod.name), arm_idx + 1)
+                    cloth.modifiers.move(cloth.modifiers.find(dt_mod.name), 0)
                 except Exception:
                     pass
                     
             fixed_count += 1
             
         context.view_layer.update()
-        self.report({'INFO'}, f"Successfully fixed clothing clipping & enabled Preserve Volume for {fixed_count} mesh(es) matching '{body_obj.name}'!")
+        self.report({'INFO'}, f"Cleaned clothing modifiers & synced smooth weights for {fixed_count} clothing mesh(es) to '{body_obj.name}'!")
         return {'FINISHED'}
 
 class OBJECT_OT_mask_body_under_clothes(bpy.types.Operator):
