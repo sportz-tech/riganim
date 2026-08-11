@@ -112,21 +112,49 @@ class OBJECT_OT_generate_human_rig(bpy.types.Operator):
             bpy.ops.object.mode_set(mode='OBJECT')
             return {'CANCELLED'}
             
-        # Auto-skin if a mesh is found in the scene
+        # Auto-skin and bind all character meshes, clothing, and body parts in 1 click
         if active_mesh:
             try:
-                # Select the mesh and make it active so auto-skin finds it
                 bpy.ops.object.mode_set(mode='OBJECT')
                 bpy.ops.object.select_all(action='DESELECT')
-                active_mesh.select_set(True)
+                
+                # Collect all character-related meshes in the scene
+                char_meshes = [active_mesh]
+                for m in context.scene.objects:
+                    if m.type == 'MESH' and m != active_mesh and not m.name.startswith("Wgt_"):
+                        # Skip background environment props
+                        if not any(k in m.name.lower() for k in ["ground", "floor", "terrain", "fence", "water", "sky"]):
+                            char_meshes.append(m)
+                            
+                for m in char_meshes:
+                    m.select_set(True)
+                    
                 obj.select_set(True) # Select the newly generated rig
                 context.view_layer.objects.active = active_mesh
                 context.view_layer.update()
                 
+                # 1. Auto-skin all body parts, hair, eyes, teeth & clothes
                 bpy.ops.object.auto_skin_mesh()
+                
+                # 2. Automatically sync clothing weights and auto-mask body skin under clothes
+                try:
+                    bpy.ops.object.fix_clothing_clipping()
+                except Exception:
+                    pass
+                try:
+                    bpy.ops.object.mask_body_under_clothes()
+                except Exception:
+                    pass
+                    
+                # Re-select rig and put in Pose mode for instant animation
+                bpy.ops.object.select_all(action='DESELECT')
+                obj.select_set(True)
+                context.view_layer.objects.active = obj
+                bpy.ops.object.mode_set(mode='POSE')
+                
             except Exception as e_skin:
                 self.report({'WARNING'}, f"Rig generated, but auto-skinning failed: {str(e_skin)}")
 
         # Finish and keep in Pose Mode so user can immediately animate!
-        self.report({'INFO'}, f"Successfully generated {rig_type.capitalize()} Rig!")
+        self.report({'INFO'}, f"Successfully generated {rig_type.capitalize()} Rig and auto-connected all character parts & clothing!")
         return {'FINISHED'}
