@@ -702,8 +702,42 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                             if above_hip:
                                 vg_thigh.remove(above_hip)
                                 log_file.write(f"Removed DEF-thigh{side} bleed from {len(above_hip)} waist/spine vertices.\n")
+                                
+                    # Clamp Upper Arm bones so moving/rotating arms NEVER pulls the chest, ribs, or spine
+                    for side in [".L", ".R"]:
+                        uarm_pb = rig_obj.pose.bones.get(f"DEF-upper_arm{side}")
+                        vg_uarm = mesh_obj.vertex_groups.get(f"DEF-upper_arm{side}")
+                        vg_farm = mesh_obj.vertex_groups.get(f"DEF-forearm{side}")
+                        vg_hand = mesh_obj.vertex_groups.get(f"DEF-hand{side}")
+                        
+                        if uarm_pb and vg_uarm:
+                            sh_head = rig_obj.matrix_world @ uarm_pb.head
+                            is_left = (side == ".L" and left_is_positive_x) or (side == ".R" and not left_is_positive_x)
+                            
+                            torso_verts = []
+                            for v in mesh_obj.data.vertices:
+                                vw = mw @ v.co
+                                # Check if vertex is inside the torso / ribcage (inward towards chest or below armpit)
+                                if is_left:
+                                    if vw.x < (sh_head.x - 0.035) or (vw.z < (sh_head.z - 0.08) and vw.x < sh_head.x):
+                                        torso_verts.append(v.index)
+                                else:
+                                    if vw.x > (sh_head.x + 0.035) or (vw.z < (sh_head.z - 0.08) and vw.x > sh_head.x):
+                                        torso_verts.append(v.index)
+                                        
+                            if torso_verts:
+                                vg_uarm.remove(torso_verts)
+                                log_file.write(f"Removed DEF-upper_arm{side} bleed from {len(torso_verts)} chest/ribcage vertices.\n")
+                                
+                            # Strip any forearm / hand weight bleed from torso
+                            center_torso = [v.index for v in mesh_obj.data.vertices if abs((mw @ v.co).x - center_x) < 0.12]
+                            if center_torso:
+                                if vg_farm:
+                                    vg_farm.remove(center_torso)
+                                if vg_hand:
+                                    vg_hand.remove(center_torso)
                 except Exception as e_spine:
-                    log_file.write(f"Spine/Thigh de-pinching failed: {e_spine}\n")
+                    log_file.write(f"Spine/Limb de-pinching failed: {e_spine}\n")
                     
                 # Foot and Toe weight cleanup
                 try:
