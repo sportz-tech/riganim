@@ -768,11 +768,20 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                         if c:
                             c.enabled = enabled
                             
-        # Enable Preserve Volume (Dual Quaternion Skinning) on all meshes to prevent volume loss during leg/arm stretching
+        # Ensure Armature modifier is at the top of the modifier stack (before Subdivision Surface)
+        # and enable Preserve Volume (Dual Quaternion Skinning) to prevent volume loss during leg/arm stretching
         for m_obj in selected_meshes:
-            for mod in m_obj.modifiers:
+            # Reorder Armature before Subsurf
+            for idx, mod in enumerate(m_obj.modifiers):
                 if mod.type == 'ARMATURE':
                     mod.use_deform_preserve_volume = True
+                    if idx > 0:
+                        # Check if preceding modifiers are Subsurf
+                        if any(m.type == 'SUBSURF' for m in m_obj.modifiers[:idx]):
+                            try:
+                                m_obj.modifiers.move(idx, 0)
+                            except Exception:
+                                pass
                             
         self.report({'INFO'}, f"Successfully auto-skinned {len(selected_meshes)} meshes to rig '{rig_obj.name}' with Preserve Volume enabled!")
         
