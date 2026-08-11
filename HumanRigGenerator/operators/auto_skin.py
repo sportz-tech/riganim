@@ -671,6 +671,9 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                                     vg.remove([v.index])
                                 cleaned_right += 1
                     log_file.write(f"Symmetrical cleanup: removed cross-leg weight bleed for {cleaned_left} left and {cleaned_right} right vertices.\n")
+                except Exception as e_sym:
+                    log_file.write(f"Symmetrical cleanup failed: {e_sym}\n")
+                    
                 # Spine and Pelvis weight de-pinching
                 try:
                     pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
