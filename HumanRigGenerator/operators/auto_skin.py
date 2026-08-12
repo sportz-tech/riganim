@@ -2,7 +2,7 @@
 import bpy
 
 def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
-    """Isolates limb weights (arms, forearms, hands, thighs) to prevent pulling the chest, back, waist, and spine."""
+    """Isolates limb weights (arms, forearms, hands, shins, feet) while preserving smooth anatomical weight blends across thighs, hips, waist, and spine."""
     if not (mesh_obj and mesh_obj.type == 'MESH' and rig_obj and rig_obj.type == 'ARMATURE'):
         return
         
@@ -10,87 +10,73 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
         mw = mesh_obj.matrix_world
         pelvis_pb = rig_obj.pose.bones.get("DEF-pelvis")
         center_x = (rig_obj.matrix_world @ pelvis_pb.head).x if pelvis_pb else 0.0
+        pelvis_z = (rig_obj.matrix_world @ pelvis_pb.head).z if pelvis_pb else 0.0
         
         l_thigh_pb = rig_obj.pose.bones.get("DEF-thigh.L")
         left_is_positive_x = True
         if l_thigh_pb:
             left_is_positive_x = ((rig_obj.matrix_world @ l_thigh_pb.head).x > center_x)
             
-        # 1. Symmetrical left/right leg cross-bleed cleanup
-        vg_left = [vg for vg in mesh_obj.vertex_groups if vg.name.endswith(".L")]
-        vg_right = [vg for vg in mesh_obj.vertex_groups if vg.name.endswith(".R")]
+        # 1. Symmetrical left/right leg cross-bleed cleanup (distal limbs: shin, foot, toe)
+        leg_distal_L = [vg for vg in mesh_obj.vertex_groups if any(k in vg.name for k in ["shin.L", "foot.L", "toe.L"])]
+        leg_distal_R = [vg for vg in mesh_obj.vertex_groups if any(k in vg.name for k in ["shin.R", "foot.R", "toe.R"])]
+        
         for v in mesh_obj.data.vertices:
             vw_x = (mw @ v.co).x
-            if abs(vw_x - center_x) > 0.01:
+            vw_z = (mw @ v.co).z
+            # Only isolate distal legs below pelvis height
+            if vw_z < pelvis_z and abs(vw_x - center_x) > 0.04:
                 is_on_left = (vw_x > center_x) if left_is_positive_x else (vw_x < center_x)
                 if is_on_left:
-                    for vg in vg_right:
+                    for vg in leg_distal_R:
                         vg.remove([v.index])
                 else:
-                    for vg in vg_left:
+                    for vg in leg_distal_L:
                         vg.remove([v.index])
                         
-        # 2. Thigh & Pelvis & Ankle weight isolation (never touch waist/spine; solid ankle joints)
-        if pelvis_pb:
-            p_head_z = (rig_obj.matrix_world @ pelvis_pb.head).z
-            vg_pelvis = mesh_obj.vertex_groups.get("DEF-pelvis")
-            if vg_pelvis:
-                upper_waist = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > p_head_z + 0.015]
-                if upper_waist:
-                    vg_pelvis.remove(upper_waist)
-                    
+        # 2. Solid Ankle Joint Hinge (Shin & Foot isolation without harsh hip cuts)
         for side in [".L", ".R"]:
-            thigh_pb = rig_obj.pose.bones.get(f"DEF-thigh{side}")
-            shin_pb = rig_obj.pose.bones.get(f"DEF-shin{side}")
             foot_pb = rig_obj.pose.bones.get(f"DEF-foot{side}")
-            toe_pb = rig_obj.pose.bones.get(f"DEF-toe{side}")
-            
-            vg_thigh = mesh_obj.vertex_groups.get(f"DEF-thigh{side}")
+            shin_pb = rig_obj.pose.bones.get(f"DEF-shin{side}")
             vg_shin = mesh_obj.vertex_groups.get(f"DEF-shin{side}")
             vg_foot = mesh_obj.vertex_groups.get(f"DEF-foot{side}")
             vg_toe = mesh_obj.vertex_groups.get(f"DEF-toe{side}")
             
-            if thigh_pb and vg_thigh:
-                t_head_z = (rig_obj.matrix_world @ thigh_pb.head).z
-                above_hip = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > t_head_z + 0.01]
-                if above_hip:
-                    vg_thigh.remove(above_hip)
-                    
-            # Solid Ankle Hinge: prevent rubbery ankle stretching
             if foot_pb:
                 f_head_z = (rig_obj.matrix_world @ foot_pb.head).z
                 
-                # Shin must not bleed into foot
-                foot_verts = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < f_head_z - 0.01]
+                # Shin must not bleed into sole/toes
+                foot_verts = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < f_head_z - 0.015]
                 if vg_shin and foot_verts:
                     vg_shin.remove(foot_verts)
                     
-                # Foot must not bleed up the calf
-                shin_verts = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > f_head_z + 0.025]
-                if vg_foot and shin_verts:
-                    vg_foot.remove(shin_verts)
-                if vg_toe and shin_verts:
-                    vg_toe.remove(shin_verts)
+                # Foot must not bleed high up the calf
+                calf_verts = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z > f_head_z + 0.035]
+                if vg_foot and calf_verts:
+                    vg_foot.remove(calf_verts)
+                if vg_toe and calf_verts:
+                    vg_toe.remove(calf_verts)
                     
-        # 3. Arm, Forearm & Hand Complete Isolation from Spine & Torso
-        # Spine (DEF-spine.001/.002/.003) must NEVER have weights on arms, forearms, or hands!
-        arm_verts_L = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x > 0.18] if left_is_positive_x else [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x < -0.18]
-        arm_verts_R = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x < -0.18] if left_is_positive_x else [v.index for v in mesh_obj.data.vertices if (mw @ v.co).x - center_x > 0.18]
+        # 3. Arm, Forearm & Hand Isolation from Spine (Upper Torso only, protecting pelvis/thighs)
+        chest_pb = rig_obj.pose.bones.get("DEF-spine.002") or rig_obj.pose.bones.get("DEF-spine.001")
+        min_arm_z = (rig_obj.matrix_world @ chest_pb.head).z if chest_pb else (pelvis_z + 0.25)
+        
+        # Only consider arm vertices in the upper torso / shoulder level (Z >= min_arm_z)
+        arm_verts_L = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z >= min_arm_z and ((mw @ v.co).x - center_x > 0.20 if left_is_positive_x else (mw @ v.co).x - center_x < -0.20)]
+        arm_verts_R = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z >= min_arm_z and ((mw @ v.co).x - center_x < -0.20 if left_is_positive_x else (mw @ v.co).x - center_x > 0.20)]
         all_arm_verts = arm_verts_L + arm_verts_R
         
-        for sp_name in ["DEF-spine", "DEF-spine.001", "DEF-spine.002", "DEF-spine.003", "DEF-pelvis"]:
+        for sp_name in ["DEF-spine.001", "DEF-spine.002", "DEF-spine.003"]:
             sp_vg = mesh_obj.vertex_groups.get(sp_name)
             if sp_vg and all_arm_verts:
                 sp_vg.remove(all_arm_verts)
                 
         for side in [".L", ".R"]:
             uarm_pb = rig_obj.pose.bones.get(f"DEF-upper_arm{side}")
-            sh_pb = rig_obj.pose.bones.get(f"DEF-shoulder{side}")
             farm_pb = rig_obj.pose.bones.get(f"DEF-forearm{side}")
             hand_pb = rig_obj.pose.bones.get(f"DEF-hand{side}")
             
             vg_uarm = mesh_obj.vertex_groups.get(f"DEF-upper_arm{side}")
-            vg_sh = mesh_obj.vertex_groups.get(f"DEF-shoulder{side}")
             vg_farm = mesh_obj.vertex_groups.get(f"DEF-forearm{side}")
             vg_hand = mesh_obj.vertex_groups.get(f"DEF-hand{side}")
             
@@ -99,14 +85,15 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
             if uarm_pb and vg_uarm:
                 sh_head = rig_obj.matrix_world @ uarm_pb.head
                 
-                # Torso vertices (inward of shoulder socket) must not have arm weights
+                # Torso vertices well inward of shoulder socket must not have arm weights
                 torso_verts = []
                 for v in mesh_obj.data.vertices:
                     vw = mw @ v.co
-                    inward_dist = (sh_head.x - vw.x) if is_left else (vw.x - sh_head.x)
-                    if inward_dist > 0.02: # Towards spine/chest
-                        torso_verts.append(v.index)
-                        
+                    if vw.z >= min_arm_z:
+                        inward_dist = (sh_head.x - vw.x) if is_left else (vw.x - sh_head.x)
+                        if inward_dist > 0.05: # Well inside chest/spine
+                            torso_verts.append(v.index)
+                            
                 if torso_verts:
                     vg_uarm.remove(torso_verts)
                 if vg_farm and torso_verts:
@@ -121,12 +108,14 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                 arm_verts = []
                 for v in mesh_obj.data.vertices:
                     vw_x = (mw @ v.co).x
-                    dist_outward = (vw_x - w_head.x) if is_left else (w_head.x - vw_x)
-                    if dist_outward > 0.012:
-                        hand_verts.append(v.index)
-                    elif dist_outward < -0.020:
-                        arm_verts.append(v.index)
-                        
+                    vw_z = (mw @ v.co).z
+                    if vw_z >= min_arm_z - 0.2:
+                        dist_outward = (vw_x - w_head.x) if is_left else (w_head.x - vw_x)
+                        if dist_outward > 0.015:
+                            hand_verts.append(v.index)
+                        elif dist_outward < -0.025:
+                            arm_verts.append(v.index)
+                            
                 if vg_farm and hand_verts:
                     vg_farm.remove(hand_verts)
                 if vg_hand and arm_verts:
@@ -136,7 +125,7 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                         if arm_verts:
                             f_vg.remove(arm_verts)
                     
-        # 4. Neck, Head & Jaw Anatomical Weighting (strict neck/head isolation; clothing protected in jumps)
+        # 4. Neck, Head & Jaw Anatomical Weighting (strict neck/head isolation)
         neck_pb = rig_obj.pose.bones.get("DEF-neck")
         head_pb = rig_obj.pose.bones.get("DEF-head")
         jaw_pb = rig_obj.pose.bones.get("DEF-jaw")
@@ -150,9 +139,9 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
         is_lower_clothing = any(k in mesh_obj.name.lower() for k in ["pant", "paint", "short", "trouser", "jean", "boxer", "skirt", "bottom", "underwear", "brief", "leg"])
         
         if is_upper_clothing:
-            # Upper clothing (shirt/jacket): ONLY torso/arms/neck bones
-            # Strip all pelvis, leg, foot, hand/finger, head, face, jaw, mouth groups so shirt doesn't over-stretch in jumps/poses
-            forbidden_upper = ["pelvis", "thigh", "shin", "foot", "toe", "leg", "knee", "ankle", "hand", "thumb", "index", "middle", "ring", "pinky", "head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face", "mouth"]
+            # Upper clothing (shirt/jacket): Torso, arms, neck, shoulders + pelvis transition
+            # Only strip distal leg bones, feet, hands, face so shirts blend naturally over hips/pelvis
+            forbidden_upper = ["shin", "foot", "toe", "ankle", "hand", "thumb", "index", "middle", "ring", "pinky", "head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face", "mouth"]
             for vg in list(mesh_obj.vertex_groups):
                 if any(k in vg.name.lower() for k in forbidden_upper):
                     mesh_obj.vertex_groups.remove(vg)
@@ -165,9 +154,9 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
                         g.weight /= total_w
 
         elif is_lower_clothing:
-            # Lower clothing (pants/shorts): ONLY pelvis and leg bones
-            # Strip upper spine, neck, head, shoulder, arm, hand, face, breast groups so pants don't stretch with upper body
-            forbidden_lower = ["spine", "neck", "head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face", "mouth", "shoulder", "arm", "hand", "thumb", "index", "middle", "ring", "pinky", "breast"]
+            # Lower clothing (pants/shorts): Pelvis, thighs, legs + spine transition
+            # Only strip upper body (head, neck, arms, hands, face) so pants waistbands blend naturally with spine
+            forbidden_lower = ["neck", "head", "jaw", "chin", "nose", "eye", "lip", "cheek", "ear", "tongue", "face", "mouth", "shoulder", "upper_arm", "forearm", "hand", "thumb", "index", "middle", "ring", "pinky", "breast"]
             for vg in list(mesh_obj.vertex_groups):
                 if any(k in vg.name.lower() for k in forbidden_lower):
                     mesh_obj.vertex_groups.remove(vg)
@@ -504,12 +493,12 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                 
                 # 2. Surgical Cleanup
                 for mod in list(mesh_obj.modifiers):
-                    if mod.type in ['ARMATURE', 'DATA_TRANSFER', 'SHRINKWRAP'] or "HRG_" in mod.name or "Cloth_" in mod.name:
+                    if mod.type in ['ARMATURE', 'DATA_TRANSFER', 'SHRINKWRAP', 'MASK'] or "HRG_" in mod.name or "Cloth_" in mod.name:
                         mesh_obj.modifiers.remove(mod)
                         
                 bone_names = {b.name for b in rig_obj.data.bones}
                 for vg in list(mesh_obj.vertex_groups):
-                    if vg.name in bone_names or vg.name.startswith("DEF-") or vg.name.startswith("ORG-") or vg.name.startswith("MCH-"):
+                    if vg.name in bone_names or vg.name.startswith("DEF-") or vg.name.startswith("ORG-") or vg.name.startswith("MCH-") or vg.name.startswith("HRG_"):
                         mesh_obj.vertex_groups.remove(vg)
                         
                 # Apply Mirror modifier if present to ensure full geometry exists physically for skinning and symmetry cleanup
@@ -1173,7 +1162,7 @@ class OBJECT_OT_fix_clothing_clipping(bpy.types.Operator):
             
         # Clean any bad modifiers from body mesh
         for mod in list(body_obj.modifiers):
-            if mod.type in ['DATA_TRANSFER', 'SHRINKWRAP']:
+            if mod.type in ['DATA_TRANSFER', 'SHRINKWRAP', 'MASK'] or "HRG_" in mod.name or "Cloth_" in mod.name:
                 body_obj.modifiers.remove(mod)
             elif mod.type == 'ARMATURE':
                 mod.use_deform_preserve_volume = True

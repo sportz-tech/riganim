@@ -136,13 +136,9 @@ class OBJECT_OT_generate_human_rig(bpy.types.Operator):
                 # 1. Auto-skin all body parts, hair, eyes, teeth & clothes
                 bpy.ops.object.auto_skin_mesh()
                 
-                # 2. Automatically sync clothing weights and auto-mask body skin under clothes
+                # 2. Automatically sync clothing weights to character body
                 try:
                     bpy.ops.object.fix_clothing_clipping()
-                except Exception:
-                    pass
-                try:
-                    bpy.ops.object.mask_body_under_clothes()
                 except Exception:
                     pass
                     
