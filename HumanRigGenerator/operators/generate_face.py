@@ -21,8 +21,13 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
     # Resolve chin/jaw target chin marker location
     p_jaw_target = get_marker_pos("Mkr_jaw", mathutils.Vector((0.0, p_neck.y - 0.09 * scale, p_neck.z - 0.02 * scale)), marker_positions)
     
-    p_lip_up_center = mathutils.Vector((0.0, p_neck.y - 0.08 * scale, p_neck.z + 0.05 * scale))
-    p_lip_low_center = mathutils.Vector((0.0, p_neck.y - 0.08 * scale, p_neck.z + 0.02 * scale))
+    # Resolve lip corner marker location first so upper and lower lip bones match it equally
+    p_lip_corner = get_marker_pos("Mkr_lip.corner.L", mathutils.Vector((0.020 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.035 * scale)), marker_positions)
+    
+    # Distribute upper and lower lip bones half and half equally relative to the lip corner marker
+    lip_offset_z = 0.015 * scale
+    p_lip_up_center = mathutils.Vector((0.0, p_lip_corner.y, p_lip_corner.z + lip_offset_z))
+    p_lip_low_center = mathutils.Vector((0.0, p_lip_corner.y, p_lip_corner.z - lip_offset_z))
     
     # 1. Central face bones (anchored to head and jaw, relative to p_neck)
     center_coords = {
@@ -80,7 +85,6 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
     p_brow2 = get_marker_pos("Mkr_eyebrow.02.L", mathutils.Vector((0.035 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.19 * scale)), marker_positions)
     p_brow3 = get_marker_pos("Mkr_eyebrow.03.L", mathutils.Vector((0.055 * scale, p_neck.y - 0.07 * scale, p_neck.z + 0.18 * scale)), marker_positions)
     p_cheek = get_marker_pos("Mkr_cheek.L", mathutils.Vector((0.050 * scale, p_neck.y - 0.05 * scale, p_neck.z + 0.08 * scale)), marker_positions)
-    p_lip_corner = get_marker_pos("Mkr_lip.corner.L", mathutils.Vector((0.020 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.035 * scale)), marker_positions)
     p_ear = mathutils.Vector((0.075 * scale, p_neck.y - 0.00 * scale, p_neck.z + 0.10 * scale))
     
     # 2. Create Eyebrow and Lip Viewport Control Bones first so detail bones can be parented to them
@@ -111,8 +115,9 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
     p_lid_low_01 = (p_corner_inner * 0.45 + p_eyelid_low * 0.55)
     p_lid_low_03 = (p_corner_outer * 0.45 + p_eyelid_low * 0.55)
 
-    p_lip_up_mid = p_lip_up_center * 0.45 + p_lip_corner * 0.55
-    p_lip_low_mid = p_lip_low_center * 0.45 + p_lip_corner * 0.55
+    # Distribute upper and lower mid-lip support points half and half equally to the lip corner
+    p_lip_up_mid = p_lip_up_center * 0.50 + p_lip_corner * 0.50
+    p_lip_low_mid = p_lip_low_center * 0.50 + p_lip_corner * 0.50
 
     # 3. Left face bones
     left_coords = {
