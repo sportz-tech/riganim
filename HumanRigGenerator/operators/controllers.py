@@ -198,6 +198,12 @@ def setup_controllers_pose(obj):
             elif "jaw" in name:
                 pb.custom_shape = w_circle_z
                 pb.custom_shape_scale_xyz = (0.6, 0.6, 0.6)
+            elif "face_root" in name:
+                pb.custom_shape = w_circle_z
+                pb.custom_shape_scale_xyz = (0.8, 0.8, 0.8)
+            elif "mouth_root" in name:
+                pb.custom_shape = w_circle_z
+                pb.custom_shape_scale_xyz = (0.5, 0.5, 0.5)
             elif "fingers" in name:
                 pb.custom_shape = w_circle_z
                 pb.custom_shape_scale_xyz = (0.4, 0.4, 0.4)
@@ -222,6 +228,7 @@ def setup_controllers_pose(obj):
     # This hooks up the body controls to drive the organizational skeleton.
     body_ctrls = [
         "pelvis", "spine", "spine.001", "spine.002", "spine.003", "neck", "head",
+        "face_root", "mouth_root",
         "shoulder.L", "shoulder.R", "jaw",
         "tail.001", "tail.002", "tail.003"
     ]

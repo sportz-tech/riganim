@@ -1,6 +1,6 @@
 import mathutils
 from ..utils.bones import create_bone, assign_to_collection, get_marker_pos
-from ..utils.naming import get_deform_name, get_org_name
+from ..utils.naming import get_deform_name, get_org_name, get_control_name
 from ..utils.mirror import mirror_bone
 
 def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
@@ -87,10 +87,22 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
     p_cheek = get_marker_pos("Mkr_cheek.L", mathutils.Vector((0.050 * scale, p_neck.y - 0.05 * scale, p_neck.z + 0.08 * scale)), marker_positions)
     p_ear = mathutils.Vector((0.075 * scale, p_neck.y - 0.00 * scale, p_neck.z + 0.10 * scale))
     
-    # 2. Create Eyebrow and Lip Viewport Control Bones (parented cleanly to CTRL-head / CTRL-jaw)
+    # 2. Create Face Root, Mouth Root, Eyebrow and Lip Viewport Control Bones
+    # CTRL-face_root (master control for entire face, parented to CTRL-head)
+    create_bone(arm_data, "CTRL-face_root", mathutils.Vector((0.0, p_neck.y - 0.05 * scale, p_neck.z + 0.12 * scale)), 
+                mathutils.Vector((0.0, p_neck.y - 0.06 * scale, p_neck.z + 0.16 * scale)), 0.0,
+                parent_name=get_control_name("head"), use_connect=False, is_deform=False)
+    assign_to_collection(arm_data, "CTRL-face_root", "Face CTRL")
+    
+    # CTRL-mouth_root (master control for mouth & upper lips, parented to CTRL-face_root)
+    create_bone(arm_data, "CTRL-mouth_root", mathutils.Vector((0.0, p_neck.y - 0.07 * scale, p_neck.z + 0.04 * scale)), 
+                mathutils.Vector((0.0, p_neck.y - 0.08 * scale, p_neck.z + 0.08 * scale)), 0.0,
+                parent_name="CTRL-face_root", use_connect=False, is_deform=False)
+    assign_to_collection(arm_data, "CTRL-mouth_root", "Face CTRL")
+    
     # CTRL-eyebrow.L
     create_bone(arm_data, "CTRL-eyebrow.L", p_brow2, p_brow2 + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name=get_control_name("head"), use_connect=False, is_deform=False)
+                parent_name="CTRL-face_root", use_connect=False, is_deform=False)
     assign_to_collection(arm_data, "CTRL-eyebrow.L", "Face CTRL")
     
     # Mirror CTRL-eyebrow.L to CTRL-eyebrow.R
@@ -100,7 +112,7 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
         
     # CTRL-lip.upper
     create_bone(arm_data, "CTRL-lip.upper", p_lip_up_center, p_lip_up_center + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name=get_control_name("head"), use_connect=False, is_deform=False)
+                parent_name="CTRL-mouth_root", use_connect=False, is_deform=False)
     assign_to_collection(arm_data, "CTRL-lip.upper", "Face CTRL")
     
     # CTRL-lip.lower
