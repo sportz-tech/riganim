@@ -101,10 +101,14 @@ FACE_CONTOURS = [
     [276, 283, 282, 295, 285],
     # Right eyebrow outline
     [46, 53, 52, 65, 55],
-    # Lips outer outline
-    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 95],
-    # Lips inner outline (upper and lower lips)
-    [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95],
+    # Upper lip outer outline
+    [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291],
+    # Lower lip outer outline
+    [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291],
+    # Upper lip inner outline
+    [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308],
+    # Lower lip inner outline
+    [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308],
     # Nose contours
     [168, 6, 197, 195, 5, 4, 2, 97, 98, 326, 327],
     # Face silhouette / jawline

@@ -1382,45 +1382,57 @@ def apply_mocap_to_rig(landmarks, hand_result, rig_obj, scene, smoothers):
         R_inv = R.inverted()
         curr_face_size = (to_blender_vec(fl[356]) - to_blender_vec(fl[127])).length
         ref_face_size = getattr(calibration_data, "ref_face_size", 1.0)
-        dynamic_face_scale = ref_face_size / max(0.01, curr_face_size)
+        # Real-Time Syllable-Responsive Mouth Tracking in Local Head Space
+        p_13 = to_blender_vec(fl[13]) # Upper inner lip
+        p_14 = to_blender_vec(fl[14]) # Lower inner lip
+        p_0 = to_blender_vec(fl[0])   # Upper outer lip
+        p_17 = to_blender_vec(fl[17]) # Lower outer lip
+        p_61 = to_blender_vec(fl[61]) # Mouth corner L
+        p_291 = to_blender_vec(fl[291]) # Mouth corner R
+        p_chin = to_blender_vec(fl[152]) # Chin bottom
+        p_forehead = to_blender_vec(fl[10]) # Forehead top
         
-        # Head-Pitch & Tilt Invariant Lip Gap Tracking in Local Head Space
-        p_13_local = R_inv @ (to_blender_vec(fl[13]) - p_origin)
-        p_14_local = R_inv @ (to_blender_vec(fl[14]) - p_origin)
+        mouth_width = max(0.01, (p_61 - p_291).length)
+        v_up = (p_forehead - p_chin).normalized()
         
-        # Local vertical distance between upper and lower lips (completely immune to head tilting/nodding)
-        local_lip_gap = max(0.0, p_13_local.z - p_14_local.z)
+        # Projected vertical separation between inner lips
+        h_inner = max(0.0, (p_13 - p_14).dot(v_up))
+        gap_ratio = h_inner / max(0.005, mouth_width * 0.42)
         
-        # Track neutral baseline for lips closed
-        if local_lip_gap < getattr(calibration_data, "min_local_lip_gap", 999.0) and local_lip_gap > 0.001:
-            calibration_data.min_local_lip_gap = local_lip_gap
-        ref_local_gap = getattr(calibration_data, "min_local_lip_gap", 0.004)
+        # Running minimum baseline (tracks true relaxed rest position, NEVER drifts upward during speech)
+        if not hasattr(calibration_data, "min_gap_ratio") or calibration_data.min_gap_ratio is None:
+            calibration_data.min_gap_ratio = gap_ratio
+        else:
+            if gap_ratio < calibration_data.min_gap_ratio and gap_ratio > 0.005:
+                calibration_data.min_gap_ratio = gap_ratio
+                
+        ref_gap = getattr(calibration_data, "min_gap_ratio", 0.04)
         
-        # True mouth opening: ONLY increases when mouth physically opens, NEVER when head tilts up/down
-        lower_lip_drop = max(0.0, (local_lip_gap - ref_local_gap) / max(0.01, curr_face_size * 0.14))
+        # Syllable-responsive opening curve:
+        # Relaxed closed lips / consonants -> 0.0 immediately
+        # Speech vowels -> proportional opening that opens and closes cleanly on every syllable
+        effective_gap = max(0.0, gap_ratio - (ref_gap + 0.030))
+        if effective_gap < 0.012:
+            speech_drop = 0.0
+        else:
+            speech_drop = min(1.0, (effective_gap - 0.012) / 0.32)
         
         jaw_mult = scene.hrg_mocap_jaw_mult
-        speech_opening = lower_lip_drop * 4.5 * face_mult * jaw_mult
+        speech_opening = speech_drop * face_mult * jaw_mult
         
-        # Speech-optimized low latency One Euro Filter
-        min_cut_jaw = max(0.08, 2.5 * (1.0 - ui_smooth))
-        beta_jaw = 0.35 * (1.0 - ui_smooth)
+        # Real-time high-speed syllable filter (zero lag, crisp 8Hz syllable tracking)
+        min_cut_jaw = max(1.5, 6.0 * (1.0 - ui_smooth))
+        beta_jaw = 0.8 * (1.0 - ui_smooth)
         filter_jaw = get_or_update_filter(smoothers, "jaw_open", min_cut_jaw, beta_jaw)
         smoothed_jaw = filter_jaw.filter(speech_opening)
         
-        pb_jaw = rig_obj.pose.bones.get("CTRL-jaw")
-        pb_org = rig_obj.pose.bones.get("ORG-jaw")
-        pb_def = rig_obj.pose.bones.get("DEF-jaw")
+        # When lips touch on consonants or pause, snap cleanly to 0.0
+        if speech_opening <= 0.001 and smoothed_jaw < 0.08:
+            smoothed_jaw = 0.0
+            filter_jaw.x_prev = 0.0
+            filter_jaw.dx_prev = 0.0
         
-        # Temp debug file logging
-        try:
-            with open("f:/blenderaddon/mocap_debug.log", "a") as f_log:
-                ctrl_rot = pb_jaw.rotation_euler[0] if pb_jaw else -9.0
-                org_rot = pb_org.rotation_euler[0] if pb_org else -9.0
-                def_rot = pb_def.rotation_euler[0] if pb_def else -9.0
-                f_log.write(f"JAW_DEBUG: lower_lip_drop={lower_lip_drop:.4f} | speech_opening={speech_opening:.4f} | smoothed={smoothed_jaw:.4f}\n")
-        except Exception as log_err:
-            print("Log error:", log_err)
+        pb_jaw = rig_obj.pose.bones.get("CTRL-jaw")
         
         try:
             rig_obj.hrg_jaw_open = min(1.0, max(0.0, smoothed_jaw))
@@ -1433,8 +1445,8 @@ def apply_mocap_to_rig(landmarks, hand_result, rig_obj, scene, smoothers):
                 pb_jaw.rotation_mode = 'XYZ'
             # Lock jaw hinge location strictly at (0, 0, 0) so it never shifts off its anatomical pivot
             pb_jaw.location = mathutils.Vector((0.0, 0.0, 0.0))
-            # Anatomical human rotation: strictly downwards (positive X) around TMJ hinge
-            pb_jaw.rotation_euler[0] = max(0.0, min(0.55, smoothed_jaw * 1.5))
+            # Natural human speech opening (max 18 degrees / 0.32 rad)
+            pb_jaw.rotation_euler[0] = max(0.0, min(0.32, smoothed_jaw * 0.30))
             pb_jaw.rotation_euler[1] = 0.0
             pb_jaw.rotation_euler[2] = 0.0
             

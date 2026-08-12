@@ -253,12 +253,12 @@ def setup_eye_constraints(obj):
         prop_owner = get_control_name("eyes_look")
         prop_name = f"eye_close{side}"
         
-        # Upper eyelid 3-bone curve: geometric closure from +33.7° resting angle to 0° horizontal eye slit
+        # Upper eyelid 3-bone curve: geometric closure to meet lower eyelid seamlessly
         upper_configs = [
-            ("eyelid.upper.01", -0.26), # -14.9 deg (inner slope)
-            ("eyelid.upper.02", -0.38), # -21.8 deg (apex closure)
-            ("eyelid.upper.03", -0.30), # -17.2 deg (outer slope)
-            ("eyelid.upper", -0.38),    # -21.8 deg (apex closure)
+            ("eyelid.upper.01", -0.48), # -27.5 deg (inner slope)
+            ("eyelid.upper.02", -0.65), # -37.2 deg (apex closure)
+            ("eyelid.upper.03", -0.52), # -29.8 deg (outer slope)
+            ("eyelid.upper", -0.65),    # -37.2 deg (apex closure)
         ]
         
         for part, coeff in upper_configs:
@@ -281,12 +281,12 @@ def setup_eye_constraints(obj):
                 target.id = obj
                 target.data_path = f'pose.bones["{prop_owner}"]["{prop_name}"]'
                 
-        # Lower eyelid 3-bone curve: subtle upward meeting
+        # Lower eyelid 3-bone curve: upward meeting
         lower_configs = [
-            ("eyelid.lower.01", 0.07),
-            ("eyelid.lower.02", 0.12),
-            ("eyelid.lower.03", 0.08),
-            ("eyelid.lower", 0.12),
+            ("eyelid.lower.01", 0.15),
+            ("eyelid.lower.02", 0.22),
+            ("eyelid.lower.03", 0.16),
+            ("eyelid.lower", 0.22),
         ]
         
         for part, coeff in lower_configs:
@@ -351,41 +351,11 @@ def setup_mouth_corner_constraints(obj):
             bone_name = f"ORG-lip.corner{side}"
             pb = pose_bones.get(bone_name)
             if pb:
-                # Remove any legacy mouth corner constraints to prevent conflicts
+                # Remove any legacy mouth corner constraints and drivers to prevent lip sinking/stretching
                 for c in list(pb.constraints):
                     if c.name in ["Child_Of_Jaw_Corner", "Copy_Jaw_Corner", "Copy_MouthRoot_Corner"]:
                         pb.constraints.remove(c)
                         
-                # Add Driver for Z Location (height follow - subtle 25% follow so corner stretches naturally without pulling upper lip)
-                pb.driver_remove("location", 2) # 2 is Z index
-                fcurve_z = pb.driver_add("location", 2)
-                drv_z = fcurve_z.driver
-                drv_z.type = 'SCRIPTED'
-                drv_z.expression = f"(-0.02 * {scale}) * max(0.0, jaw_rot)"
-                
-                var_z = drv_z.variables.new()
-                var_z.name = "jaw_rot"
-                var_z.type = 'TRANSFORMS'
-                target_z = var_z.targets[0]
-                target_z.id = obj
-                target_z.bone_target = "CTRL-jaw"
-                target_z.transform_type = 'ROT_X'
-                target_z.transform_space = 'LOCAL_SPACE'
-                
-                # Add Driver for Y Location (depth follow)
-                pb.driver_remove("location", 1) # 1 is Y index
-                fcurve_y = pb.driver_add("location", 1)
-                drv_y = fcurve_y.driver
-                drv_y.type = 'SCRIPTED'
-                drv_y.expression = f"(-0.01 * {scale}) * max(0.0, jaw_rot)"
-                
-                var_y = drv_y.variables.new()
-                var_y.name = "jaw_rot"
-                var_y.type = 'TRANSFORMS'
-                target_y = var_y.targets[0]
-                target_y.id = obj
-                target_y.bone_target = "CTRL-jaw"
-                target_y.transform_type = 'ROT_X'
-                target_y.transform_space = 'LOCAL_SPACE'
+                pb.driver_remove("location")
                 
 

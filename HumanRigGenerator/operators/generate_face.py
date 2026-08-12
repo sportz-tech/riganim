@@ -25,17 +25,31 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
     p_lip_corner = get_marker_pos("Mkr_lip.corner.L", mathutils.Vector((0.020 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.035 * scale)), marker_positions)
     
     # Distribute upper and lower lip bones half and half equally relative to the lip corner marker
-    lip_offset_z = 0.015 * scale
+    lip_offset_z = 0.005 * scale
     p_lip_up_center = mathutils.Vector((0.0, p_lip_corner.y, p_lip_corner.z + lip_offset_z))
     p_lip_low_center = mathutils.Vector((0.0, p_lip_corner.y, p_lip_corner.z - lip_offset_z))
     
-    # 1. Central face bones (anchored to head and jaw, relative to p_neck)
+    p_nose = get_marker_pos("Mkr_nose", mathutils.Vector((0.0, p_neck.y - 0.07 * scale, p_neck.z + 0.14 * scale)), marker_positions)
+    
+    # 1. Resolve marker coordinates
+    p_eye = get_marker_pos("Mkr_eye.L", mathutils.Vector((0.035 * scale, p_neck.y - 0.06 * scale, p_neck.z + 0.14 * scale)), marker_positions)
+    p_eyelid_up = get_marker_pos("Mkr_eyelid.upper.L", p_eye + mathutils.Vector((0.0, -0.03 * scale, 0.02 * scale)), marker_positions)
+    p_eyelid_low = get_marker_pos("Mkr_eyelid.lower.L", p_eye + mathutils.Vector((0.0, -0.03 * scale, -0.02 * scale)), marker_positions)
+    p_corner_inner = get_marker_pos("Mkr_eye_corner_inner.L", p_eye + mathutils.Vector((-0.02 * scale, -0.01 * scale, 0.0)), marker_positions)
+    p_corner_outer = get_marker_pos("Mkr_eye_corner_outer.L", p_eye + mathutils.Vector((0.02 * scale, -0.01 * scale, 0.0)), marker_positions)
+    p_brow1 = get_marker_pos("Mkr_eyebrow.01.L", mathutils.Vector((0.015 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.18 * scale)), marker_positions)
+    p_brow2 = get_marker_pos("Mkr_eyebrow.02.L", mathutils.Vector((0.035 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.19 * scale)), marker_positions)
+    p_brow3 = get_marker_pos("Mkr_eyebrow.03.L", mathutils.Vector((0.055 * scale, p_neck.y - 0.07 * scale, p_neck.z + 0.18 * scale)), marker_positions)
+    p_cheek = get_marker_pos("Mkr_cheek.L", mathutils.Vector((0.050 * scale, p_neck.y - 0.05 * scale, p_neck.z + 0.08 * scale)), marker_positions)
+    p_ear = mathutils.Vector((0.075 * scale, p_neck.y - 0.00 * scale, p_neck.z + 0.10 * scale))
+    
+    # 2. Central face bones (anchored to head and jaw, relative to p_neck)
     center_coords = {
         "face_root": ((0.0, p_neck.y - 0.05 * scale, p_neck.z + 0.12 * scale), (0.0, p_neck.y - 0.06 * scale, p_neck.z + 0.16 * scale), 0.0),
         "mouth_root": ((0.0, p_neck.y - 0.07 * scale, p_neck.z + 0.04 * scale), (0.0, p_neck.y - 0.08 * scale, p_neck.z + 0.08 * scale), 0.0),
         "jaw":   ((0.0, p_neck.y - 0.0 * scale, p_neck.z + 0.06 * scale), (0.0, p_neck.y - 0.07 * scale, p_neck.z + 0.02 * scale), 0.0),
         "chin":  ((0.0, p_neck.y - 0.07 * scale, p_neck.z + 0.02 * scale), p_jaw_target, 0.0),
-        "nose":  ((0.0, p_neck.y - 0.07 * scale, p_neck.z + 0.14 * scale), (0.0, p_neck.y - 0.10 * scale, p_neck.z + 0.10 * scale), 0.0),
+        "nose":  (p_nose, p_nose + mathutils.Vector((0.0, -0.03 * scale, -0.04 * scale)), 0.0),
         "lip.upper": (p_lip_up_center, p_lip_up_center + mathutils.Vector((0.0, -0.015 * scale, 0.005 * scale)), 0.0),
         "lip.lower": (p_lip_low_center, p_lip_low_center + mathutils.Vector((0.0, -0.015 * scale, -0.005 * scale)), 0.0),
     }
@@ -58,11 +72,14 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
         elif name == "mouth_root":
             parent_org = get_org_name("face_root")
             parent_def = get_deform_name("face_root")
+        elif name == "nose":
+            parent_org = get_org_name("face_root")
+            parent_def = get_deform_name("face_root")
         elif name == "lip.upper":
-            parent_org = "CTRL-lip.upper"
+            parent_org = get_org_name("mouth_root")
             parent_def = get_deform_name("mouth_root")
         elif name == "lip.lower":
-            parent_org = "CTRL-lip.lower"
+            parent_org = get_org_name("jaw")
             parent_def = get_deform_name("jaw")
             
         # Create ORG- bone
@@ -74,51 +91,6 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
         create_bone(arm_data, def_name, mathutils.Vector(head), mathutils.Vector(tail), roll,
                     parent_name=parent_def, use_connect=False, is_deform=True)
         assign_to_collection(arm_data, def_name, "Deform")
-        
-    # Resolve left marker coordinates with get_marker_pos
-    p_eye = get_marker_pos("Mkr_eye.L", mathutils.Vector((0.035 * scale, p_neck.y - 0.06 * scale, p_neck.z + 0.14 * scale)), marker_positions)
-    p_eyelid_up = get_marker_pos("Mkr_eyelid.upper.L", p_eye + mathutils.Vector((0.0, -0.03 * scale, 0.02 * scale)), marker_positions)
-    p_eyelid_low = get_marker_pos("Mkr_eyelid.lower.L", p_eye + mathutils.Vector((0.0, -0.03 * scale, -0.02 * scale)), marker_positions)
-    p_corner_inner = get_marker_pos("Mkr_eye_corner_inner.L", p_eye + mathutils.Vector((-0.02 * scale, -0.01 * scale, 0.0)), marker_positions)
-    p_corner_outer = get_marker_pos("Mkr_eye_corner_outer.L", p_eye + mathutils.Vector((0.02 * scale, -0.01 * scale, 0.0)), marker_positions)
-    p_brow1 = get_marker_pos("Mkr_eyebrow.01.L", mathutils.Vector((0.015 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.18 * scale)), marker_positions)
-    p_brow2 = get_marker_pos("Mkr_eyebrow.02.L", mathutils.Vector((0.035 * scale, p_neck.y - 0.08 * scale, p_neck.z + 0.19 * scale)), marker_positions)
-    p_brow3 = get_marker_pos("Mkr_eyebrow.03.L", mathutils.Vector((0.055 * scale, p_neck.y - 0.07 * scale, p_neck.z + 0.18 * scale)), marker_positions)
-    p_cheek = get_marker_pos("Mkr_cheek.L", mathutils.Vector((0.050 * scale, p_neck.y - 0.05 * scale, p_neck.z + 0.08 * scale)), marker_positions)
-    p_ear = mathutils.Vector((0.075 * scale, p_neck.y - 0.00 * scale, p_neck.z + 0.10 * scale))
-    
-    # 2. Create Face Root, Mouth Root, Eyebrow and Lip Viewport Control Bones
-    # CTRL-face_root (master control for entire face, parented to CTRL-head)
-    create_bone(arm_data, "CTRL-face_root", mathutils.Vector((0.0, p_neck.y - 0.05 * scale, p_neck.z + 0.12 * scale)), 
-                mathutils.Vector((0.0, p_neck.y - 0.06 * scale, p_neck.z + 0.16 * scale)), 0.0,
-                parent_name=get_control_name("head"), use_connect=False, is_deform=False)
-    assign_to_collection(arm_data, "CTRL-face_root", "Face CTRL")
-    
-    # CTRL-mouth_root (master control for mouth & upper lips, parented to CTRL-face_root)
-    create_bone(arm_data, "CTRL-mouth_root", mathutils.Vector((0.0, p_neck.y - 0.07 * scale, p_neck.z + 0.04 * scale)), 
-                mathutils.Vector((0.0, p_neck.y - 0.08 * scale, p_neck.z + 0.08 * scale)), 0.0,
-                parent_name="CTRL-face_root", use_connect=False, is_deform=False)
-    assign_to_collection(arm_data, "CTRL-mouth_root", "Face CTRL")
-    
-    # CTRL-eyebrow.L
-    create_bone(arm_data, "CTRL-eyebrow.L", p_brow2, p_brow2 + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name="CTRL-face_root", use_connect=False, is_deform=False)
-    assign_to_collection(arm_data, "CTRL-eyebrow.L", "Face CTRL")
-    
-    # Mirror CTRL-eyebrow.L to CTRL-eyebrow.R
-    right_brow = mirror_bone(arm_data, "CTRL-eyebrow.L")
-    if right_brow:
-        assign_to_collection(arm_data, right_brow.name, "Face CTRL")
-        
-    # CTRL-lip.upper
-    create_bone(arm_data, "CTRL-lip.upper", p_lip_up_center, p_lip_up_center + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name="CTRL-mouth_root", use_connect=False, is_deform=False)
-    assign_to_collection(arm_data, "CTRL-lip.upper", "Face CTRL")
-    
-    # CTRL-lip.lower
-    create_bone(arm_data, "CTRL-lip.lower", p_lip_low_center, p_lip_low_center + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name=get_control_name("jaw"), use_connect=False, is_deform=False)
-    assign_to_collection(arm_data, "CTRL-lip.lower", "Face CTRL")
     
     # Curved Eyelid Arc Support Points
     p_lid_up_01 = (p_corner_inner * 0.45 + p_eyelid_up * 0.55)
@@ -158,17 +130,11 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
     for name, (head, tail, roll) in left_coords.items():
         org_name = get_org_name(name)
         
-        # Parent detail bones to CTRL bones to inherit translations, else to face_root
         parent_org = get_org_name("face_root")
-        if "eyebrow" in name:
-            parent_org = "CTRL-eyebrow.L"
+        if "lip.lower" in name:
+            parent_org = get_org_name("jaw")
         elif "lip" in name:
-            if "corner" in name:
-                parent_org = get_org_name("mouth_root")
-            elif "upper" in name:
-                parent_org = "CTRL-lip.upper"
-            else:
-                parent_org = "CTRL-lip.lower"
+            parent_org = get_org_name("mouth_root")
         elif "ear" in name:
             parent_org = get_org_name("head")
             

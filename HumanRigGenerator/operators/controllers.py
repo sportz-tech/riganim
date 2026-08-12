@@ -71,6 +71,13 @@ def generate_body_controllers_edit(arm_data, gender="MALE"):
         assign_to_collection(arm_data, ctrl_name, collection_name)
         
     # 3. Eyes Target Controllers (placed in front of the head)
+    ctrl_head = arm_data.edit_bones.get(get_control_name("head"))
+    if ctrl_head:
+        for face_ctrl_name in ["CTRL-face_root", "CTRL-jaw"]:
+            fc_bone = arm_data.edit_bones.get(face_ctrl_name)
+            if fc_bone:
+                fc_bone.parent = ctrl_head
+                
     eye_l_bone = arm_data.edit_bones.get(get_org_name("eye.L"))
     if eye_l_bone:
         eye_y = eye_l_bone.head.y - 0.15

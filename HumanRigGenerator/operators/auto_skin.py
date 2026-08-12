@@ -381,8 +381,8 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                     log_file.write(f"Eyeball skinning for '{mesh_obj.name}' succeeded!\n")
                     continue
                 
-                # Check if this mesh is a tear line, eye occlusion, or eyelash accessory mesh
-                is_eye_accessory = any(k in mesh_obj.name.lower() for k in ["tear", "tearline", "occlusion", "eyeocclusion", "eye_occlusion", "eyelash", "eyelashes", "lash", "lashes", "cornea", "eye_moisture"])
+                # Check if this mesh is a tear line, eye occlusion, eyelash, or eyebrow accessory mesh
+                is_eye_accessory = any(k in mesh_obj.name.lower() for k in ["tear", "tearline", "occlusion", "eyeocclusion", "eye_occlusion", "eyelash", "eyelashes", "lash", "lashes", "cornea", "eye_moisture", "brow", "eyebrow", "eyebrows"])
                 
                 if is_eye_accessory:
                     log_file.write(f"Detected separate eye accessory mesh object '{mesh_obj.name}'. Binding to head & eyelids...\n")
@@ -1243,6 +1243,93 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
         
         import math
         
+        # Collect eyelid bones for left and right eyes
+        eyelid_data = []
+        for side in [".L", ".R"]:
+            pb_eye = rig_obj.pose.bones.get(f"DEF-eye{side}")
+            if not pb_eye:
+                continue
+            p_eye_pos = rig_obj.matrix_world @ pb_eye.head
+            
+            pb_up_01 = rig_obj.pose.bones.get(f"DEF-eyelid.upper.01{side}")
+            pb_up_02 = rig_obj.pose.bones.get(f"DEF-eyelid.upper.02{side}")
+            pb_up_03 = rig_obj.pose.bones.get(f"DEF-eyelid.upper.03{side}")
+            pb_up_main = rig_obj.pose.bones.get(f"DEF-eyelid.upper{side}")
+            
+            pb_low_01 = rig_obj.pose.bones.get(f"DEF-eyelid.lower.01{side}")
+            pb_low_02 = rig_obj.pose.bones.get(f"DEF-eyelid.lower.02{side}")
+            pb_low_03 = rig_obj.pose.bones.get(f"DEF-eyelid.lower.03{side}")
+            pb_low_main = rig_obj.pose.bones.get(f"DEF-eyelid.lower{side}")
+            
+            pb_c_in = rig_obj.pose.bones.get(f"DEF-eye_corner.inner{side}")
+            pb_c_out = rig_obj.pose.bones.get(f"DEF-eye_corner.outer{side}")
+            
+            eyelid_data.append({
+                "side": side,
+                "p_eye": p_eye_pos,
+                "vg_up_01": get_or_create_vg(f"DEF-eyelid.upper.01{side}") if pb_up_01 else None,
+                "pos_up_01": (rig_obj.matrix_world @ pb_up_01.tail) if pb_up_01 else p_eye_pos,
+                "vg_up_02": get_or_create_vg(f"DEF-eyelid.upper.02{side}") if pb_up_02 else None,
+                "pos_up_02": (rig_obj.matrix_world @ pb_up_02.tail) if pb_up_02 else p_eye_pos,
+                "vg_up_03": get_or_create_vg(f"DEF-eyelid.upper.03{side}") if pb_up_03 else None,
+                "pos_up_03": (rig_obj.matrix_world @ pb_up_03.tail) if pb_up_03 else p_eye_pos,
+                "vg_up_main": get_or_create_vg(f"DEF-eyelid.upper{side}") if pb_up_main else None,
+                "pos_up_main": (rig_obj.matrix_world @ pb_up_main.tail) if pb_up_main else p_eye_pos,
+                
+                "vg_low_01": get_or_create_vg(f"DEF-eyelid.lower.01{side}") if pb_low_01 else None,
+                "pos_low_01": (rig_obj.matrix_world @ pb_low_01.tail) if pb_low_01 else p_eye_pos,
+                "vg_low_02": get_or_create_vg(f"DEF-eyelid.lower.02{side}") if pb_low_02 else None,
+                "pos_low_02": (rig_obj.matrix_world @ pb_low_02.tail) if pb_low_02 else p_eye_pos,
+                "vg_low_03": get_or_create_vg(f"DEF-eyelid.lower.03{side}") if pb_low_03 else None,
+                "pos_low_03": (rig_obj.matrix_world @ pb_low_03.tail) if pb_low_03 else p_eye_pos,
+                "vg_low_main": get_or_create_vg(f"DEF-eyelid.lower{side}") if pb_low_main else None,
+                "pos_low_main": (rig_obj.matrix_world @ pb_low_main.tail) if pb_low_main else p_eye_pos,
+                
+                "vg_c_in": get_or_create_vg(f"DEF-eye_corner.inner{side}") if pb_c_in else None,
+                "pos_c_in": (rig_obj.matrix_world @ pb_c_in.tail) if pb_c_in else p_eye_pos,
+                "vg_c_out": get_or_create_vg(f"DEF-eye_corner.outer{side}") if pb_c_out else None,
+                "pos_c_out": (rig_obj.matrix_world @ pb_c_out.tail) if pb_c_out else p_eye_pos,
+            })
+            
+        # Collect eyebrow bones for left and right brows
+        eyebrow_data = []
+        for side in [".L", ".R"]:
+            pb_b1 = rig_obj.pose.bones.get(f"DEF-eyebrow.01{side}")
+            pb_b2 = rig_obj.pose.bones.get(f"DEF-eyebrow.02{side}")
+            pb_b3 = rig_obj.pose.bones.get(f"DEF-eyebrow.03{side}")
+            if not pb_b2:
+                continue
+            p_b1 = (rig_obj.matrix_world @ pb_b1.head) if pb_b1 else (rig_obj.matrix_world @ pb_b2.head)
+            p_b2 = (rig_obj.matrix_world @ pb_b2.head)
+            p_b3 = (rig_obj.matrix_world @ pb_b3.head) if pb_b3 else (rig_obj.matrix_world @ pb_b2.head)
+            
+            eyebrow_data.append({
+                "side": side,
+                "pos_b1": p_b1,
+                "pos_b2": p_b2,
+                "pos_b3": p_b3,
+                "vg_b1": get_or_create_vg(f"DEF-eyebrow.01{side}") if pb_b1 else None,
+                "vg_b2": get_or_create_vg(f"DEF-eyebrow.02{side}") if pb_b2 else None,
+                "vg_b3": get_or_create_vg(f"DEF-eyebrow.03{side}") if pb_b3 else None,
+            })
+            
+        # Collect cheek bones for left and right
+        cheek_data = []
+        for side in [".L", ".R"]:
+            pb_chk = rig_obj.pose.bones.get(f"DEF-cheek{side}")
+            if pb_chk:
+                p_chk = rig_obj.matrix_world @ pb_chk.head
+                cheek_data.append({
+                    "pos": p_chk,
+                    "vg": get_or_create_vg(f"DEF-cheek{side}"),
+                })
+        
+        vg_face_root = get_or_create_vg("DEF-face_root")
+        r_eye_socket = 0.036 * (p_head.z - p_neck.z) / 0.26
+        sigma_eyelid = 0.012 * (p_head.z - p_neck.z) / 0.26
+        sigma_brow = 0.018 * (p_head.z - p_neck.z) / 0.26
+        sigma_lip = 0.026 * (p_head.z - p_neck.z) / 0.26
+        
         # Weight calculations per vertex in the facial region
         for v in mesh_obj.data.vertices:
             vw = mw @ v.co
@@ -1254,6 +1341,94 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
                 continue
                 
             face_v_indices.append(v.index)
+            is_forward_face = (vw.y < p_head.y - 0.010)
+            
+            # Cheek region weighting (anchored solidly to head & face_root with subtle responsive cheek bone deformer)
+            for cd in cheek_data:
+                dist_chk = (vw - cd["pos"]).length
+                if dist_chk < r_eye_socket * 1.60 and is_forward_face and vw.z < p_head.z - 0.01 and vw.z > p_chin.z + 0.02:
+                    sigma_chk = 0.028 * (p_head.z - p_neck.z) / 0.26
+                    w_chk = math.exp(-0.5 * (dist_chk / sigma_chk)**2) * 0.35
+                    w_face_anchor = 0.65
+                    cd["vg"].add([v.index], w_chk, 'REPLACE')
+                    vg_face_root.add([v.index], w_face_anchor, 'ADD')
+            
+            # Eyelid blink region weight calculation
+            for ed in eyelid_data:
+                dist_eye = (vw - ed["p_eye"]).length
+                if dist_eye < r_eye_socket and vw.y < ed["p_eye"].y + 0.015:
+                    if vw.z >= ed["p_eye"].z - 0.003:
+                        # Upper eyelid
+                        d_01 = (vw - ed["pos_up_01"]).length
+                        d_02 = (vw - ed["pos_up_02"]).length
+                        d_03 = (vw - ed["pos_up_03"]).length
+                        d_main = (vw - ed["pos_up_main"]).length
+                        d_cin = (vw - ed["pos_c_in"]).length
+                        d_cout = (vw - ed["pos_c_out"]).length
+                        
+                        w_01 = math.exp(-0.5 * (d_01 / sigma_eyelid)**2) if ed["vg_up_01"] else 0.0
+                        w_02 = math.exp(-0.5 * (d_02 / sigma_eyelid)**2) if ed["vg_up_02"] else 0.0
+                        w_03 = math.exp(-0.5 * (d_03 / sigma_eyelid)**2) if ed["vg_up_03"] else 0.0
+                        w_main = math.exp(-0.5 * (d_main / sigma_eyelid)**2) if ed["vg_up_main"] else 0.0
+                        w_cin = math.exp(-0.5 * (d_cin / (sigma_eyelid * 0.8))**2) * 0.3 if ed["vg_c_in"] else 0.0
+                        w_cout = math.exp(-0.5 * (d_cout / (sigma_eyelid * 0.8))**2) * 0.3 if ed["vg_c_out"] else 0.0
+                        w_base = 0.12
+                        
+                        tot_lid = w_01 + w_02 + w_03 + w_main + w_cin + w_cout + w_base
+                        if tot_lid > 0.0001:
+                            if ed["vg_up_01"]: ed["vg_up_01"].add([v.index], w_01 / tot_lid, 'REPLACE')
+                            if ed["vg_up_02"]: ed["vg_up_02"].add([v.index], w_02 / tot_lid, 'REPLACE')
+                            if ed["vg_up_03"]: ed["vg_up_03"].add([v.index], w_03 / tot_lid, 'REPLACE')
+                            if ed["vg_up_main"]: ed["vg_up_main"].add([v.index], w_main / tot_lid, 'REPLACE')
+                            if ed["vg_c_in"]: ed["vg_c_in"].add([v.index], w_cin / tot_lid, 'REPLACE')
+                            if ed["vg_c_out"]: ed["vg_c_out"].add([v.index], w_cout / tot_lid, 'REPLACE')
+                            vg_face_root.add([v.index], w_base / tot_lid, 'REPLACE')
+                    else:
+                        # Lower eyelid
+                        d_01 = (vw - ed["pos_low_01"]).length
+                        d_02 = (vw - ed["pos_low_02"]).length
+                        d_03 = (vw - ed["pos_low_03"]).length
+                        d_main = (vw - ed["pos_low_main"]).length
+                        d_cin = (vw - ed["pos_c_in"]).length
+                        d_cout = (vw - ed["pos_c_out"]).length
+                        
+                        w_01 = math.exp(-0.5 * (d_01 / sigma_eyelid)**2) if ed["vg_low_01"] else 0.0
+                        w_02 = math.exp(-0.5 * (d_02 / sigma_eyelid)**2) if ed["vg_low_02"] else 0.0
+                        w_03 = math.exp(-0.5 * (d_03 / sigma_eyelid)**2) if ed["vg_low_03"] else 0.0
+                        w_main = math.exp(-0.5 * (d_main / sigma_eyelid)**2) if ed["vg_low_main"] else 0.0
+                        w_cin = math.exp(-0.5 * (d_cin / (sigma_eyelid * 0.8))**2) * 0.3 if ed["vg_c_in"] else 0.0
+                        w_cout = math.exp(-0.5 * (d_cout / (sigma_eyelid * 0.8))**2) * 0.3 if ed["vg_c_out"] else 0.0
+                        w_base = 0.12
+                        
+                        tot_lid = w_01 + w_02 + w_03 + w_main + w_cin + w_cout + w_base
+                        if tot_lid > 0.0001:
+                            if ed["vg_low_01"]: ed["vg_low_01"].add([v.index], w_01 / tot_lid, 'REPLACE')
+                            if ed["vg_low_02"]: ed["vg_low_02"].add([v.index], w_02 / tot_lid, 'REPLACE')
+                            if ed["vg_low_03"]: ed["vg_low_03"].add([v.index], w_03 / tot_lid, 'REPLACE')
+                            if ed["vg_low_main"]: ed["vg_low_main"].add([v.index], w_main / tot_lid, 'REPLACE')
+                            if ed["vg_c_in"]: ed["vg_c_in"].add([v.index], w_cin / tot_lid, 'REPLACE')
+                            if ed["vg_c_out"]: ed["vg_c_out"].add([v.index], w_cout / tot_lid, 'REPLACE')
+                            vg_face_root.add([v.index], w_base / tot_lid, 'REPLACE')
+            
+            # Eyebrow region weight calculation (above eye level, forward face)
+            for bd in eyebrow_data:
+                dist_brow = (vw - bd["pos_b2"]).length
+                if dist_brow < r_eye_socket * 1.45 and is_forward_face and vw.z > (p_neck.z + 0.12 * (p_head.z - p_neck.z) / 0.26):
+                    d_b1 = (vw - bd["pos_b1"]).length
+                    d_b2 = (vw - bd["pos_b2"]).length
+                    d_b3 = (vw - bd["pos_b3"]).length
+                    
+                    w_b1 = math.exp(-0.5 * (d_b1 / sigma_brow)**2) if bd["vg_b1"] else 0.0
+                    w_b2 = math.exp(-0.5 * (d_b2 / sigma_brow)**2) if bd["vg_b2"] else 0.0
+                    w_b3 = math.exp(-0.5 * (d_b3 / sigma_brow)**2) if bd["vg_b3"] else 0.0
+                    w_base_brow = 0.20 # forehead/skull base anchor
+                    
+                    tot_brow = w_b1 + w_b2 + w_b3 + w_base_brow
+                    if tot_brow > 0.0001:
+                        if bd["vg_b1"]: bd["vg_b1"].add([v.index], w_b1 / tot_brow, 'REPLACE')
+                        if bd["vg_b2"]: bd["vg_b2"].add([v.index], w_b2 / tot_brow, 'REPLACE')
+                        if bd["vg_b3"]: bd["vg_b3"].add([v.index], w_b3 / tot_brow, 'REPLACE')
+                        vg_face_root.add([v.index], w_base_brow / tot_brow, 'REPLACE')
             
             # Interpolate mouth seam Z directly from placed left/right corner bones to center seam
             if vw.x >= 0.0 and abs(pos_corner_L.x) > 0.001:
@@ -1312,8 +1487,8 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
                     w_up = math.exp(-0.5 * (d_up / sigma_lip) ** 2)
                     w_up_L = math.exp(-0.5 * (d_up_L / sigma_lip) ** 2) if vg_lip_up_L else 0.0
                     w_up_R = math.exp(-0.5 * (d_up_R / sigma_lip) ** 2) if vg_lip_up_R else 0.0
-                    w_c_L = math.exp(-0.5 * (d_c_L / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_L else 0.0
-                    w_c_R = math.exp(-0.5 * (d_c_R / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_R else 0.0
+                    w_c_L = math.exp(-0.5 * (d_c_L / (sigma_lip * 1.1)) ** 2) * 0.65 if vg_corner_L else 0.0
+                    w_c_R = math.exp(-0.5 * (d_c_R / (sigma_lip * 1.1)) ** 2) * 0.65 if vg_corner_R else 0.0
                     w_root = math.exp(-0.5 * (d_root / (sigma_lip * 1.6)) ** 2) * 0.4 if vg_mouth_root else 0.0
                     w_head = 0.08
                     
@@ -1339,8 +1514,8 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
                         w_low = math.exp(-0.5 * (d_low / sigma_lip) ** 2)
                         w_low_L = math.exp(-0.5 * (d_low_L / sigma_lip) ** 2) if vg_lip_low_L else 0.0
                         w_low_R = math.exp(-0.5 * (d_low_R / sigma_lip) ** 2) if vg_lip_low_R else 0.0
-                        w_c_L = math.exp(-0.5 * (d_c_L / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_L else 0.0
-                        w_c_R = math.exp(-0.5 * (d_c_R / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_R else 0.0
+                        w_c_L = math.exp(-0.5 * (d_c_L / (sigma_lip * 1.1)) ** 2) * 0.65 if vg_corner_L else 0.0
+                        w_c_R = math.exp(-0.5 * (d_c_R / (sigma_lip * 1.1)) ** 2) * 0.65 if vg_corner_R else 0.0
                         
                         total_lip_low = w_low + w_low_L + w_low_R + w_c_L + w_c_R
                         if total_lip_low > 0.0001:
