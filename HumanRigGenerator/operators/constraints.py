@@ -361,31 +361,31 @@ def setup_mouth_corner_constraints(obj):
                 fcurve_z = pb.driver_add("location", 2)
                 drv_z = fcurve_z.driver
                 drv_z.type = 'SCRIPTED'
-                drv_z.expression = f"(-0.02 * {scale}) * jaw_rot"
+                drv_z.expression = f"(-0.02 * {scale}) * max(0.0, jaw_rot)"
                 
                 var_z = drv_z.variables.new()
                 var_z.name = "jaw_rot"
                 var_z.type = 'TRANSFORMS'
                 target_z = var_z.targets[0]
                 target_z.id = obj
-                target_z.bone_target = "ORG-jaw"
+                target_z.bone_target = "CTRL-jaw"
                 target_z.transform_type = 'ROT_X'
-                target_z.transform_space = 'TRANSFORM_SPACE'
+                target_z.transform_space = 'LOCAL_SPACE'
                 
                 # Add Driver for Y Location (depth follow)
                 pb.driver_remove("location", 1) # 1 is Y index
                 fcurve_y = pb.driver_add("location", 1)
                 drv_y = fcurve_y.driver
                 drv_y.type = 'SCRIPTED'
-                drv_y.expression = f"(-0.01 * {scale}) * jaw_rot"
+                drv_y.expression = f"(-0.01 * {scale}) * max(0.0, jaw_rot)"
                 
                 var_y = drv_y.variables.new()
                 var_y.name = "jaw_rot"
                 var_y.type = 'TRANSFORMS'
                 target_y = var_y.targets[0]
                 target_y.id = obj
-                target_y.bone_target = "ORG-jaw"
+                target_y.bone_target = "CTRL-jaw"
                 target_y.transform_type = 'ROT_X'
-                target_y.transform_space = 'TRANSFORM_SPACE'
+                target_y.transform_space = 'LOCAL_SPACE'
                 
 

@@ -87,10 +87,10 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
     p_cheek = get_marker_pos("Mkr_cheek.L", mathutils.Vector((0.050 * scale, p_neck.y - 0.05 * scale, p_neck.z + 0.08 * scale)), marker_positions)
     p_ear = mathutils.Vector((0.075 * scale, p_neck.y - 0.00 * scale, p_neck.z + 0.10 * scale))
     
-    # 2. Create Eyebrow and Lip Viewport Control Bones first so detail bones can be parented to them
+    # 2. Create Eyebrow and Lip Viewport Control Bones (parented cleanly to CTRL-head / CTRL-jaw)
     # CTRL-eyebrow.L
     create_bone(arm_data, "CTRL-eyebrow.L", p_brow2, p_brow2 + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name=get_org_name("face_root"), use_connect=False, is_deform=False)
+                parent_name=get_control_name("head"), use_connect=False, is_deform=False)
     assign_to_collection(arm_data, "CTRL-eyebrow.L", "Face CTRL")
     
     # Mirror CTRL-eyebrow.L to CTRL-eyebrow.R
@@ -100,12 +100,12 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
         
     # CTRL-lip.upper
     create_bone(arm_data, "CTRL-lip.upper", p_lip_up_center, p_lip_up_center + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name=get_org_name("mouth_root"), use_connect=False, is_deform=False)
+                parent_name=get_control_name("head"), use_connect=False, is_deform=False)
     assign_to_collection(arm_data, "CTRL-lip.upper", "Face CTRL")
     
     # CTRL-lip.lower
     create_bone(arm_data, "CTRL-lip.lower", p_lip_low_center, p_lip_low_center + mathutils.Vector((0.0, -0.02 * scale, 0.0)), 0.0,
-                parent_name=get_org_name("jaw"), use_connect=False, is_deform=False)
+                parent_name=get_control_name("jaw"), use_connect=False, is_deform=False)
     assign_to_collection(arm_data, "CTRL-lip.lower", "Face CTRL")
     
     # Curved Eyelid Arc Support Points
@@ -157,6 +157,8 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
                 parent_org = "CTRL-lip.upper"
             else:
                 parent_org = "CTRL-lip.lower"
+        elif "ear" in name:
+            parent_org = get_org_name("head")
             
         bone = create_bone(arm_data, org_name, mathutils.Vector(head), mathutils.Vector(tail), roll,
                     parent_name=parent_org, use_connect=False, is_deform=False)
@@ -175,7 +177,7 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
             if "eyelid" in right_bone.name or "eye_corner" in right_bone.name:
                 right_bone.align_roll(mathutils.Vector((0, 0, 1)))
             
-    # Generate DEF- bones for both sides parented to deform anchors (face_root/mouth_root/jaw)
+    # Generate DEF- bones for both sides parented to deform anchors (face_root/mouth_root/jaw/head)
     for side in [".L", ".R"]:
         for name in left_coords.keys():
             core_name = name[:-2] # e.g. "eye"
@@ -192,6 +194,8 @@ def generate_face_bones(arm_data, gender="MALE", marker_positions=None):
                 parent_def = get_deform_name("jaw")
             elif "lip" in name:
                 parent_def = get_deform_name("mouth_root")
+            elif "ear" in name:
+                parent_def = get_deform_name("head")
                 
             def_bone = create_bone(arm_data, def_name, org_bone.head.copy(), org_bone.tail.copy(), org_bone.roll,
                         parent_name=parent_def, use_connect=False, is_deform=True)
