@@ -1198,11 +1198,23 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
             z_lip_up = corner_avg_z + 0.015
             z_lip_low = corner_avg_z - 0.015
             
-        p_lip_up_pos = mathutils.Vector((0.0, y_mesh_seam, z_lip_up))
-        p_lip_low_pos = mathutils.Vector((0.0, y_mesh_seam, z_lip_low))
+        def get_bone_pos(bone_name, fallback_pos):
+            pb = rig_obj.pose.bones.get(bone_name)
+            if pb:
+                return rig_obj.matrix_world @ pb.head
+            return fallback_pos
+            
+        pos_lip_up = get_bone_pos("DEF-lip.upper", mathutils.Vector((0.0, y_mesh_seam, z_lip_up)))
+        pos_lip_low = get_bone_pos("DEF-lip.lower", mathutils.Vector((0.0, y_mesh_seam, z_lip_low)))
+        pos_lip_up_L = get_bone_pos("DEF-lip.upper.01.L", pos_lip_up * 0.5 + p_corner_L * 0.5)
+        pos_lip_up_R = get_bone_pos("DEF-lip.upper.01.R", pos_lip_up * 0.5 + p_corner_R * 0.5)
+        pos_lip_low_L = get_bone_pos("DEF-lip.lower.01.L", pos_lip_low * 0.5 + p_corner_L * 0.5)
+        pos_lip_low_R = get_bone_pos("DEF-lip.lower.01.R", pos_lip_low * 0.5 + p_corner_R * 0.5)
+        pos_corner_L = get_bone_pos("DEF-lip.corner.L", p_corner_L)
+        pos_corner_R = get_bone_pos("DEF-lip.corner.R", p_corner_R)
         
         if log_file:
-            log_file.write(f"Anchored mouth dividing line to placed Lip Corner Bones: Corner L=({p_corner_L.x:.4f}, {p_corner_L.z:.4f}), Corner R=({p_corner_R.x:.4f}, {p_corner_R.z:.4f}), Center Seam Z={z_mesh_seam:.4f}\n")
+            log_file.write(f"Anchored mouth dividing line to placed Lip Corner Bones: Corner L=({pos_corner_L.x:.4f}, {pos_corner_L.z:.4f}), Corner R=({pos_corner_R.x:.4f}, {pos_corner_R.z:.4f}), Center Seam Z={z_mesh_seam:.4f}\n")
         
         # Ensure vertex groups exist
         def get_or_create_vg(name):
@@ -1227,6 +1239,9 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
         vg_nose = get_or_create_vg("DEF-nose") if nose_pb else None
         
         face_v_indices = []
+        sigma_lip = 0.022 * (p_head.z - p_neck.z) / 0.26
+        
+        import math
         
         # Weight calculations per vertex in the facial region
         for v in mesh_obj.data.vertices:
@@ -1241,12 +1256,12 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
             face_v_indices.append(v.index)
             
             # Interpolate mouth seam Z directly from placed left/right corner bones to center seam
-            if vw.x >= 0.0 and abs(p_corner_L.x) > 0.001:
-                t_side = min(1.0, max(0.0, vw.x / abs(p_corner_L.x)))
-                z_seam = (1.0 - t_side) * z_mesh_seam + t_side * p_corner_L.z
-            elif vw.x < 0.0 and abs(p_corner_R.x) > 0.001:
-                t_side = min(1.0, max(0.0, abs(vw.x) / abs(p_corner_R.x)))
-                z_seam = (1.0 - t_side) * z_mesh_seam + t_side * p_corner_R.z
+            if vw.x >= 0.0 and abs(pos_corner_L.x) > 0.001:
+                t_side = min(1.0, max(0.0, vw.x / abs(pos_corner_L.x)))
+                z_seam = (1.0 - t_side) * z_mesh_seam + t_side * pos_corner_L.z
+            elif vw.x < 0.0 and abs(pos_corner_R.x) > 0.001:
+                t_side = min(1.0, max(0.0, abs(vw.x) / abs(pos_corner_R.x)))
+                z_seam = (1.0 - t_side) * z_mesh_seam + t_side * pos_corner_R.z
             else:
                 z_seam = z_mesh_seam
             
@@ -1284,80 +1299,67 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
                     try: vg_nose.remove([v.index])
                     except: pass
             
-            if is_forward_face and vw.z < p_nose.z + 0.015:
-                dist_to_chin = (vw - p_chin).length
-                dist_to_lip_up = (vw - p_lip_up_pos).length
-                dist_to_lip_low = (vw - p_lip_low_pos).length
-                dist_to_corner_L = (vw - p_corner_L).length
-                dist_to_corner_R = (vw - p_corner_R).length
-                
-                # 1. Outer Mouth corners (localized to placed lip corner bone positions)
-                r_corner = 0.014 * (p_head.z - p_neck.z) / 0.26
-                is_near_corner_L = (dist_to_corner_L < r_corner)
-                is_near_corner_R = (dist_to_corner_R < r_corner)
-                
-                if is_near_corner_L:
-                    w_corner = max(0.0, min(1.0, 1.0 - (dist_to_corner_L / r_corner)))
-                    w_corner = w_corner * w_corner * (3.0 - 2.0 * w_corner)
-                    vg_corner_L.add([v.index], w_corner * 0.5, 'REPLACE')
-                    if vg_corner_R:
-                        vg_corner_R.remove([v.index])
-                elif is_near_corner_R:
-                    w_corner = max(0.0, min(1.0, 1.0 - (dist_to_corner_R / r_corner)))
-                    w_corner = w_corner * w_corner * (3.0 - 2.0 * w_corner)
-                    vg_corner_R.add([v.index], w_corner * 0.5, 'REPLACE')
-                    if vg_corner_L:
-                        vg_corner_L.remove([v.index])
+            if is_forward_face and vw.z < p_nose.z + 0.020:
+                # 1. UPPER LIP ZONE (vw.z > z_seam)
+                if vw.z > z_seam:
+                    d_up = (vw - pos_lip_up).length
+                    d_up_L = (vw - pos_lip_up_L).length
+                    d_up_R = (vw - pos_lip_up_R).length
+                    d_c_L = (vw - pos_corner_L).length
+                    d_c_R = (vw - pos_corner_R).length
+                    d_root = (vw - p_mouth_root).length
+                    
+                    w_up = math.exp(-0.5 * (d_up / sigma_lip) ** 2)
+                    w_up_L = math.exp(-0.5 * (d_up_L / sigma_lip) ** 2) if vg_lip_up_L else 0.0
+                    w_up_R = math.exp(-0.5 * (d_up_R / sigma_lip) ** 2) if vg_lip_up_R else 0.0
+                    w_c_L = math.exp(-0.5 * (d_c_L / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_L else 0.0
+                    w_c_R = math.exp(-0.5 * (d_c_R / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_R else 0.0
+                    w_root = math.exp(-0.5 * (d_root / (sigma_lip * 1.6)) ** 2) * 0.4 if vg_mouth_root else 0.0
+                    w_head = 0.08
+                    
+                    total_upper = w_up + w_up_L + w_up_R + w_c_L + w_c_R + w_root + w_head
+                    if total_upper > 0.0001:
+                        vg_lip_up.add([v.index], w_up / total_upper, 'REPLACE')
+                        if vg_lip_up_L: vg_lip_up_L.add([v.index], w_up_L / total_upper, 'REPLACE')
+                        if vg_lip_up_R: vg_lip_up_R.add([v.index], w_up_R / total_upper, 'REPLACE')
+                        if vg_corner_L: vg_corner_L.add([v.index], w_c_L / total_upper, 'REPLACE')
+                        if vg_corner_R: vg_corner_R.add([v.index], w_c_R / total_upper, 'REPLACE')
+                        if vg_mouth_root: vg_mouth_root.add([v.index], w_root / total_upper, 'REPLACE')
+                        if vg_head: vg_head.add([v.index], w_head / total_upper, 'REPLACE')
+                        
+                # 2. LOWER LIP & JAW ZONE (vw.z <= z_seam)
                 else:
-                    if vg_corner_L:
-                        vg_corner_L.remove([v.index])
-                    if vg_corner_R:
-                        vg_corner_R.remove([v.index])
-                        
-                # 2. Lower Lip & Chin & Mandible (Z <= z_seam)
-                if vw.z <= z_seam:
                     if vw.z >= p_chin.z + 0.015:
-                        # Lower lip area
-                        w_lip_low = max(0.0, min(1.0, 1.0 - (dist_to_lip_low / 0.035)))
-                        w_lip_low = w_lip_low * w_lip_low * (3.0 - 2.0 * w_lip_low)
+                        d_low = (vw - pos_lip_low).length
+                        d_low_L = (vw - pos_lip_low_L).length
+                        d_low_R = (vw - pos_lip_low_R).length
+                        d_c_L = (vw - pos_corner_L).length
+                        d_c_R = (vw - pos_corner_R).length
                         
-                        # Distribute left/right/center lip
-                        if vw.x > 0.008 and vg_lip_low_L:
-                            vg_lip_low_L.add([v.index], w_lip_low * 0.7, 'REPLACE')
-                            vg_lip_low.add([v.index], w_lip_low * 0.3, 'REPLACE')
-                        elif vw.x < -0.008 and vg_lip_low_R:
-                            vg_lip_low_R.add([v.index], w_lip_low * 0.7, 'REPLACE')
-                            vg_lip_low.add([v.index], w_lip_low * 0.3, 'REPLACE')
-                        else:
-                            vg_lip_low.add([v.index], w_lip_low * 0.85, 'REPLACE')
-                            
-                        vg_jaw.add([v.index], 1.0 - w_lip_low * 0.3, 'REPLACE')
-                        vg_head.remove([v.index])
+                        w_low = math.exp(-0.5 * (d_low / sigma_lip) ** 2)
+                        w_low_L = math.exp(-0.5 * (d_low_L / sigma_lip) ** 2) if vg_lip_low_L else 0.0
+                        w_low_R = math.exp(-0.5 * (d_low_R / sigma_lip) ** 2) if vg_lip_low_R else 0.0
+                        w_c_L = math.exp(-0.5 * (d_c_L / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_L else 0.0
+                        w_c_R = math.exp(-0.5 * (d_c_R / (sigma_lip * 0.8)) ** 2) * 0.4 if vg_corner_R else 0.0
+                        
+                        total_lip_low = w_low + w_low_L + w_low_R + w_c_L + w_c_R
+                        if total_lip_low > 0.0001:
+                            vg_lip_low.add([v.index], (w_low / total_lip_low) * 0.75, 'REPLACE')
+                            if vg_lip_low_L: vg_lip_low_L.add([v.index], (w_low_L / total_lip_low) * 0.75, 'REPLACE')
+                            if vg_lip_low_R: vg_lip_low_R.add([v.index], (w_low_R / total_lip_low) * 0.75, 'REPLACE')
+                            if vg_corner_L: vg_corner_L.add([v.index], (w_c_L / total_lip_low) * 0.75, 'REPLACE')
+                            if vg_corner_R: vg_corner_R.add([v.index], (w_c_R / total_lip_low) * 0.75, 'REPLACE')
+                            vg_jaw.add([v.index], 0.25, 'REPLACE')
+                            vg_head.remove([v.index])
                     else:
                         # Chin area
+                        dist_to_chin = (vw - p_chin).length
                         w_chin = max(0.0, min(1.0, 1.0 - (dist_to_chin / 0.040)))
                         w_chin = w_chin * w_chin * (3.0 - 2.0 * w_chin)
-                        vg_chin.add([v.index], w_chin * 0.9, 'REPLACE')
-                        vg_jaw.add([v.index], 1.0 - w_chin * 0.5, 'REPLACE')
+                        vg_chin.add([v.index], w_chin * 0.85, 'REPLACE')
+                        vg_jaw.add([v.index], 1.0 - w_chin * 0.85, 'REPLACE')
                         vg_head.remove([v.index])
                         
-                # 3. Upper Lip & Maxilla & Philtrum (Z > z_seam)
-                else:
-                    w_lip_up = max(0.0, min(1.0, 1.0 - (dist_to_lip_up / 0.035)))
-                    w_lip_up = w_lip_up * w_lip_up * (3.0 - 2.0 * w_lip_up)
-                    
-                    if vw.x > 0.008 and vg_lip_up_L:
-                        vg_lip_up_L.add([v.index], w_lip_up * 0.7, 'REPLACE')
-                        vg_lip_up.add([v.index], w_lip_up * 0.3, 'REPLACE')
-                    elif vw.x < -0.008 and vg_lip_up_R:
-                        vg_lip_up_R.add([v.index], w_lip_up * 0.7, 'REPLACE')
-                        vg_lip_up.add([v.index], w_lip_up * 0.3, 'REPLACE')
-                    else:
-                        vg_lip_up.add([v.index], w_lip_up * 0.85, 'REPLACE')
-                        
-                    vg_mouth_root.add([v.index], (1.0 - w_lip_up) * 0.6, 'REPLACE')
-                    vg_head.add([v.index], (1.0 - w_lip_up) * 0.4, 'REPLACE')
-                    
             elif not is_forward_face and vw.z < p_chin.z + 0.02:
                 # Throat / Submandibular area below jaw
                 dist_jaw_head = (vw - p_jaw).length
