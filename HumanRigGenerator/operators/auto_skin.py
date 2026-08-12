@@ -1153,14 +1153,70 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
         p_neck = rig_obj.matrix_world @ neck_pb.head if neck_pb else (p_head - mathutils.Vector((0, 0, 0.15)))
         p_nose = rig_obj.matrix_world @ nose_pb.head if nose_pb else (p_head + mathutils.Vector((0, -0.08, -0.04)))
         
-        p_lip_up = rig_obj.matrix_world @ lip_up_pb.head if lip_up_pb else (p_chin + mathutils.Vector((0, 0, 0.045)))
-        p_lip_low = rig_obj.matrix_world @ lip_low_pb.head if lip_low_pb else (p_chin + mathutils.Vector((0, 0, 0.02)))
+        # 1. Automatic Geometric Detection of Lip Corners & Mouth Seam from character mesh
+        z_min_mouth = p_chin.z + 0.010
+        z_max_mouth = p_nose.z - 0.005
+        y_max_mouth = p_head.y - 0.015 # forward face
+        x_max_mouth = 0.065
         
-        p_corner_L = rig_obj.matrix_world @ corner_L_pb.head if corner_L_pb else (p_lip_up + mathutils.Vector((0.025, 0, -0.01)))
-        p_corner_R = rig_obj.matrix_world @ corner_R_pb.head if corner_R_pb else (p_lip_up + mathutils.Vector((-0.025, 0, -0.01)))
+        mouth_verts = []
+        for v in mesh_obj.data.vertices:
+            vw = mw @ v.co
+            if z_min_mouth <= vw.z <= z_max_mouth and abs(vw.x) <= x_max_mouth and vw.y <= y_max_mouth:
+                mouth_verts.append((v.index, vw))
+                
+        if mouth_verts:
+            # Central vertical profile (|X| < 0.008)
+            center_mv = [mv for mv in mouth_verts if abs(mv[1].x) < 0.008]
+            if len(center_mv) >= 4:
+                center_mv.sort(key=lambda it: it[1].z)
+                z_mid = (z_min_mouth + z_max_mouth) * 0.5
+                low_cand = [cv for cv in center_mv if cv[1].z < z_mid]
+                up_cand = [cv for cv in center_mv if cv[1].z >= z_mid]
+                
+                z_lip_low = min(low_cand, key=lambda it: it[1].y)[1].z if low_cand else (z_min_mouth + 0.015)
+                z_lip_up = min(up_cand, key=lambda it: it[1].y)[1].z if up_cand else (z_max_mouth - 0.015)
+                
+                # Seam is the deepest inward groove (max Y) between lower and upper lip apex
+                seam_cand = [cv for cv in center_mv if z_lip_low <= cv[1].z <= z_lip_up]
+                if seam_cand:
+                    seam_vertex = max(seam_cand, key=lambda it: it[1].y)
+                    z_mesh_seam = seam_vertex[1].z
+                    y_mesh_seam = seam_vertex[1].y
+                else:
+                    z_mesh_seam = (z_lip_low + z_lip_up) * 0.5
+                    y_mesh_seam = p_head.y - 0.075
+            else:
+                z_mesh_seam = (p_chin.z + p_nose.z) * 0.5
+                y_mesh_seam = p_head.y - 0.075
+                z_lip_up = z_mesh_seam + 0.015
+                z_lip_low = z_mesh_seam - 0.015
+                
+            # Detect exact left and right lip corners from outermost X on the seam band
+            band_verts = [mv for mv in mouth_verts if abs(mv[1].z - z_mesh_seam) < 0.018]
+            cand_L = [bv for bv in band_verts if bv[1].x > 0.012]
+            cand_R = [bv for bv in band_verts if bv[1].x < -0.012]
+            
+            p_corner_L = max(cand_L, key=lambda it: it[1].x)[1] if cand_L else mathutils.Vector((0.025, y_mesh_seam, z_mesh_seam))
+            p_corner_R = min(cand_R, key=lambda it: it[1].x)[1] if cand_R else mathutils.Vector((-0.025, y_mesh_seam, z_mesh_seam))
+            mouth_center = mathutils.Vector((0.0, y_mesh_seam, z_mesh_seam))
+        else:
+            p_lip_up = rig_obj.matrix_world @ lip_up_pb.head if lip_up_pb else (p_chin + mathutils.Vector((0, 0, 0.045)))
+            p_lip_low = rig_obj.matrix_world @ lip_low_pb.head if lip_low_pb else (p_chin + mathutils.Vector((0, 0, 0.02)))
+            mouth_center = (p_lip_up + p_lip_low) * 0.5
+            z_mesh_seam = mouth_center.z
+            z_lip_up = p_lip_up.z
+            z_lip_low = p_lip_low.z
+            p_corner_L = mathutils.Vector((0.025, mouth_center.y, z_mesh_seam))
+            p_corner_R = mathutils.Vector((-0.025, mouth_center.y, z_mesh_seam))
+            
+        mouth_width = max(0.018, abs(p_corner_L.x - p_corner_R.x) * 0.5)
         
-        mouth_center = (p_lip_up + p_lip_low) * 0.5
-        mouth_width = max(0.02, abs(p_corner_L.x - p_corner_R.x) * 0.5)
+        p_lip_up_pos = mathutils.Vector((0.0, mouth_center.y, z_lip_up))
+        p_lip_low_pos = mathutils.Vector((0.0, mouth_center.y, z_lip_low))
+        
+        if log_file:
+            log_file.write(f"Detected geometric mouth landmarks on '{mesh_obj.name}': Seam Z={z_mesh_seam:.4f}, Corner L=({p_corner_L.x:.4f},{p_corner_L.z:.4f}), Corner R=({p_corner_R.x:.4f},{p_corner_R.z:.4f}), Width={mouth_width:.4f}\n")
         
         # Ensure vertex groups exist
         def get_or_create_vg(name):
@@ -1203,7 +1259,7 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
             
             # Slanted mouth opening seam dividing upper and lower lip
             corner_z = (p_corner_L.z + p_corner_R.z) * 0.5
-            z_seam = (1.0 - tx) * mouth_center.z + tx * corner_z
+            z_seam = (1.0 - tx) * z_mesh_seam + tx * corner_z
             
             is_forward_face = (vw.y < p_head.y - 0.015)
             
@@ -1241,8 +1297,8 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
             
             if is_forward_face and vw.z < p_nose.z + 0.015:
                 dist_to_chin = (vw - p_chin).length
-                dist_to_lip_up = (vw - p_lip_up).length
-                dist_to_lip_low = (vw - p_lip_low).length
+                dist_to_lip_up = (vw - p_lip_up_pos).length
+                dist_to_lip_low = (vw - p_lip_low_pos).length
                 dist_to_corner_L = (vw - p_corner_L).length
                 dist_to_corner_R = (vw - p_corner_R).length
                 
