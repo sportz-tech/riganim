@@ -170,31 +170,18 @@ def cleanup_limb_bleed(mesh_obj, rig_obj, log_file=None):
         else:
             # On Body Mesh:
             if neck_pb and head_pb:
-                n_head_z = (rig_obj.matrix_world @ neck_pb.head).z  # ~1.49m (base of neck)
-                h_head_z = (rig_obj.matrix_world @ head_pb.head).z  # ~1.62m (jaw / base of skull)
+                n_head_z = (rig_obj.matrix_world @ neck_pb.head).z  # base of neck
+                h_head_z = (rig_obj.matrix_world @ head_pb.head).z  # jaw / base of skull
                 
-                # 1. DEF-head strictly limited to skull/face (Z >= h_head_z - 0.02) - never touches shoulders or chest
-                below_skull = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < h_head_z - 0.02]
+                # 1. DEF-head strictly limited to skull/face (Z >= n_head_z - 0.015) - never touches shoulders or chest
+                below_skull = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015]
                 if vg_head and below_skull:
                     vg_head.remove(below_skull)
                     
-                # 2. DEF-neck strictly limited to neck cylinder (|X - center_x| < 0.065 and Z >= n_head_z - 0.015) - never touches shoulders
-                non_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.015 or abs((mw @ v.co).x - center_x) > 0.065]
+                # 2. DEF-neck strictly limited to neck cylinder (|X - center_x| < 0.075 and Z >= n_head_z - 0.02) - never touches shoulders
+                non_neck = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < n_head_z - 0.02 or abs((mw @ v.co).x - center_x) > 0.075]
                 if vg_neck and non_neck:
                     vg_neck.remove(non_neck)
-                    
-                # 3. DEF-jaw strictly limited to lower chin/mandible
-                if jaw_pb and vg_jaw:
-                    j_head_z = (rig_obj.matrix_world @ jaw_pb.head).z
-                    j_head_y = (rig_obj.matrix_world @ jaw_pb.head).y
-                    not_jaw = [v.index for v in mesh_obj.data.vertices if (mw @ v.co).z < j_head_z - 0.035 or (mw @ v.co).y < j_head_y - 0.04]
-                    if not_jaw:
-                        vg_jaw.remove(not_jaw)
-                        # Throat vertices belong to head
-                        if vg_head:
-                            for vi in not_jaw:
-                                if (mw @ mesh_obj.data.vertices[vi].co).z >= h_head_z:
-                                    vg_head.add([vi], 0.9, 'ADD')
                                     
         if log_file:
             log_file.write(f"Completed clean limb bleed isolation on mesh '{mesh_obj.name}'.\n")
@@ -948,6 +935,12 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                 except Exception as e_lids:
                     log_file.write(f"Eyelid weight painting failed: {e_lids}\n")
                     
+                # Anatomical Face, Mouth, Lip & Jaw weight painting for speech and facial expressions
+                try:
+                    paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file)
+                except Exception as e_face:
+                    log_file.write(f"Facial weight painting failed: {e_face}\n")
+                    
                 # Foot and Toe weight cleanup (only for body and foot/shoe meshes, never upper clothing/shirts)
                 is_upper = any(k in mesh_obj.name.lower() for k in ["shirt", "top", "jacket", "coat", "vest", "tshirt", "hoodie", "sweater", "bra", "chest"])
                 if not is_upper:
@@ -1094,6 +1087,207 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                 diag_file.write("No mesh object selected/found.\n")
                 
         return {'FINISHED'}
+
+def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
+    """Paints smooth, realistic anatomical weights for mouth, lips, jaw, chin, and cheeks on character body mesh."""
+    import mathutils
+    if not (mesh_obj and mesh_obj.type == 'MESH' and rig_obj and rig_obj.type == 'ARMATURE'):
+        return
+        
+    try:
+        mw = mesh_obj.matrix_world
+        
+        # Resolve pose bones
+        jaw_pb = rig_obj.pose.bones.get("DEF-jaw")
+        chin_pb = rig_obj.pose.bones.get("DEF-chin")
+        mouth_root_pb = rig_obj.pose.bones.get("DEF-mouth_root")
+        head_pb = rig_obj.pose.bones.get("DEF-head")
+        neck_pb = rig_obj.pose.bones.get("DEF-neck")
+        nose_pb = rig_obj.pose.bones.get("DEF-nose")
+        
+        lip_up_pb = rig_obj.pose.bones.get("DEF-lip.upper")
+        lip_low_pb = rig_obj.pose.bones.get("DEF-lip.lower")
+        lip_up_L_pb = rig_obj.pose.bones.get("DEF-lip.upper.01.L")
+        lip_up_R_pb = rig_obj.pose.bones.get("DEF-lip.upper.01.R")
+        lip_low_L_pb = rig_obj.pose.bones.get("DEF-lip.lower.01.L")
+        lip_low_R_pb = rig_obj.pose.bones.get("DEF-lip.lower.01.R")
+        corner_L_pb = rig_obj.pose.bones.get("DEF-lip.corner.L")
+        corner_R_pb = rig_obj.pose.bones.get("DEF-lip.corner.R")
+        cheek_L_pb = rig_obj.pose.bones.get("DEF-cheek.L")
+        cheek_R_pb = rig_obj.pose.bones.get("DEF-cheek.R")
+        
+        if not (jaw_pb and head_pb and chin_pb):
+            return
+            
+        p_jaw = rig_obj.matrix_world @ jaw_pb.head
+        p_chin = rig_obj.matrix_world @ chin_pb.tail
+        p_head = rig_obj.matrix_world @ head_pb.head
+        p_neck = rig_obj.matrix_world @ neck_pb.head if neck_pb else (p_head - mathutils.Vector((0, 0, 0.15)))
+        p_nose = rig_obj.matrix_world @ nose_pb.head if nose_pb else (p_head + mathutils.Vector((0, -0.08, -0.04)))
+        
+        p_lip_up = rig_obj.matrix_world @ lip_up_pb.head if lip_up_pb else (p_chin + mathutils.Vector((0, 0, 0.045)))
+        p_lip_low = rig_obj.matrix_world @ lip_low_pb.head if lip_low_pb else (p_chin + mathutils.Vector((0, 0, 0.02)))
+        
+        p_corner_L = rig_obj.matrix_world @ corner_L_pb.head if corner_L_pb else (p_lip_up + mathutils.Vector((0.025, 0, -0.01)))
+        p_corner_R = rig_obj.matrix_world @ corner_R_pb.head if corner_R_pb else (p_lip_up + mathutils.Vector((-0.025, 0, -0.01)))
+        
+        mouth_center = (p_lip_up + p_lip_low) * 0.5
+        mouth_width = max(0.02, abs(p_corner_L.x - p_corner_R.x) * 0.5)
+        
+        # Ensure vertex groups exist
+        def get_or_create_vg(name):
+            vg = mesh_obj.vertex_groups.get(name)
+            if not vg:
+                vg = mesh_obj.vertex_groups.new(name=name)
+            return vg
+            
+        vg_jaw = get_or_create_vg("DEF-jaw")
+        vg_chin = get_or_create_vg("DEF-chin")
+        vg_head = get_or_create_vg("DEF-head")
+        vg_mouth_root = get_or_create_vg("DEF-mouth_root")
+        
+        vg_lip_up = get_or_create_vg("DEF-lip.upper")
+        vg_lip_low = get_or_create_vg("DEF-lip.lower")
+        vg_lip_up_L = get_or_create_vg("DEF-lip.upper.01.L") if lip_up_L_pb else None
+        vg_lip_up_R = get_or_create_vg("DEF-lip.upper.01.R") if lip_up_R_pb else None
+        vg_lip_low_L = get_or_create_vg("DEF-lip.lower.01.L") if lip_low_L_pb else None
+        vg_lip_low_R = get_or_create_vg("DEF-lip.lower.01.R") if lip_low_R_pb else None
+        vg_corner_L = get_or_create_vg("DEF-lip.corner.L")
+        vg_corner_R = get_or_create_vg("DEF-lip.corner.R")
+        vg_nose = get_or_create_vg("DEF-nose") if nose_pb else None
+        
+        face_v_indices = []
+        
+        # Weight calculations per vertex in the facial region
+        for v in mesh_obj.data.vertices:
+            vw = mw @ v.co
+            
+            # Check if vertex is in the head/face zone (above base of neck)
+            if vw.z < p_neck.z - 0.04 or vw.z > p_head.z + 0.15:
+                continue
+            if abs(vw.x) > 0.14 or abs(vw.y - p_head.y) > 0.18:
+                continue
+                
+            face_v_indices.append(v.index)
+            
+            # Mouth horizontal coordinate normalized [0..1]
+            tx = min(1.0, max(0.0, abs(vw.x) / mouth_width))
+            
+            # Slanted mouth opening seam dividing upper and lower lip
+            corner_z = (p_corner_L.z + p_corner_R.z) * 0.5
+            z_seam = (1.0 - tx) * mouth_center.z + tx * corner_z
+            
+            is_forward_face = (vw.y < p_head.y - 0.015)
+            
+            if is_forward_face and vw.z < p_nose.z + 0.015:
+                dist_to_chin = (vw - p_chin).length
+                dist_to_lip_up = (vw - p_lip_up).length
+                dist_to_lip_low = (vw - p_lip_low).length
+                dist_to_corner_L = (vw - p_corner_L).length
+                dist_to_corner_R = (vw - p_corner_R).length
+                
+                # 1. Mouth corners
+                r_corner = 0.024 * (p_head.z - p_neck.z) / 0.26
+                is_near_corner_L = (dist_to_corner_L < r_corner)
+                is_near_corner_R = (dist_to_corner_R < r_corner)
+                
+                if is_near_corner_L:
+                    w_corner = max(0.0, min(1.0, 1.0 - (dist_to_corner_L / r_corner)))
+                    w_corner = w_corner * w_corner * (3.0 - 2.0 * w_corner)
+                    vg_corner_L.add([v.index], w_corner * 0.8, 'REPLACE')
+                    if vg_corner_R:
+                        vg_corner_R.remove([v.index])
+                elif is_near_corner_R:
+                    w_corner = max(0.0, min(1.0, 1.0 - (dist_to_corner_R / r_corner)))
+                    w_corner = w_corner * w_corner * (3.0 - 2.0 * w_corner)
+                    vg_corner_R.add([v.index], w_corner * 0.8, 'REPLACE')
+                    if vg_corner_L:
+                        vg_corner_L.remove([v.index])
+                else:
+                    if vg_corner_L:
+                        vg_corner_L.remove([v.index])
+                    if vg_corner_R:
+                        vg_corner_R.remove([v.index])
+                        
+                # 2. Lower Lip & Chin & Mandible (Z <= z_seam)
+                if vw.z <= z_seam:
+                    # Clear upper lip and upper face groups from lower lip/chin
+                    vg_mouth_root.remove([v.index])
+                    vg_lip_up.remove([v.index])
+                    if vg_lip_up_L: vg_lip_up_L.remove([v.index])
+                    if vg_lip_up_R: vg_lip_up_R.remove([v.index])
+                    if vg_nose: vg_nose.remove([v.index])
+                    
+                    # Lower lip vs Chin
+                    if vw.z >= p_chin.z + 0.015:
+                        # Lower lip area
+                        w_lip_low = max(0.0, min(1.0, 1.0 - (dist_to_lip_low / 0.035)))
+                        w_lip_low = w_lip_low * w_lip_low * (3.0 - 2.0 * w_lip_low)
+                        
+                        # Distribute left/right/center lip
+                        if vw.x > 0.008 and vg_lip_low_L:
+                            vg_lip_low_L.add([v.index], w_lip_low * 0.7, 'REPLACE')
+                            vg_lip_low.add([v.index], w_lip_low * 0.3, 'REPLACE')
+                        elif vw.x < -0.008 and vg_lip_low_R:
+                            vg_lip_low_R.add([v.index], w_lip_low * 0.7, 'REPLACE')
+                            vg_lip_low.add([v.index], w_lip_low * 0.3, 'REPLACE')
+                        else:
+                            vg_lip_low.add([v.index], w_lip_low * 0.85, 'REPLACE')
+                            
+                        vg_jaw.add([v.index], 1.0 - w_lip_low * 0.3, 'REPLACE')
+                        vg_head.remove([v.index])
+                    else:
+                        # Chin area
+                        w_chin = max(0.0, min(1.0, 1.0 - (dist_to_chin / 0.040)))
+                        w_chin = w_chin * w_chin * (3.0 - 2.0 * w_chin)
+                        vg_chin.add([v.index], w_chin * 0.9, 'REPLACE')
+                        vg_jaw.add([v.index], 1.0 - w_chin * 0.5, 'REPLACE')
+                        vg_head.remove([v.index])
+                        
+                # 3. Upper Lip & Maxilla & Philtrum (Z > z_seam)
+                else:
+                    # Clear jaw, chin, and lower lip groups from upper lip
+                    vg_jaw.remove([v.index])
+                    vg_chin.remove([v.index])
+                    vg_lip_low.remove([v.index])
+                    if vg_lip_low_L: vg_lip_low_L.remove([v.index])
+                    if vg_lip_low_R: vg_lip_low_R.remove([v.index])
+                    
+                    w_lip_up = max(0.0, min(1.0, 1.0 - (dist_to_lip_up / 0.035)))
+                    w_lip_up = w_lip_up * w_lip_up * (3.0 - 2.0 * w_lip_up)
+                    
+                    if vw.x > 0.008 and vg_lip_up_L:
+                        vg_lip_up_L.add([v.index], w_lip_up * 0.7, 'REPLACE')
+                        vg_lip_up.add([v.index], w_lip_up * 0.3, 'REPLACE')
+                    elif vw.x < -0.008 and vg_lip_up_R:
+                        vg_lip_up_R.add([v.index], w_lip_up * 0.7, 'REPLACE')
+                        vg_lip_up.add([v.index], w_lip_up * 0.3, 'REPLACE')
+                    else:
+                        vg_lip_up.add([v.index], w_lip_up * 0.85, 'REPLACE')
+                        
+                    vg_mouth_root.add([v.index], (1.0 - w_lip_up) * 0.6, 'REPLACE')
+                    vg_head.add([v.index], (1.0 - w_lip_up) * 0.4, 'REPLACE')
+                    
+            elif not is_forward_face and vw.z < p_chin.z + 0.02:
+                # Throat / Submandibular area below jaw
+                dist_jaw_head = (vw - p_jaw).length
+                w_jaw_angle = max(0.0, min(1.0, 1.0 - (dist_jaw_head / 0.08)))
+                vg_jaw.add([v.index], w_jaw_angle * 0.6, 'ADD')
+                vg_head.add([v.index], 1.0 - w_jaw_angle * 0.6, 'ADD')
+                
+        # Normalize weights on all face vertices so sum equals 1.0
+        for vi in face_v_indices:
+            v = mesh_obj.data.vertices[vi]
+            total_w = sum(g.weight for g in v.groups)
+            if total_w > 0.0001:
+                for g in v.groups:
+                    g.weight /= total_w
+                    
+        if log_file:
+            log_file.write(f"Completed anatomical face, mouth, lip & jaw weight painting on '{mesh_obj.name}'.\n")
+    except Exception as e:
+        if log_file:
+            log_file.write(f"Anatomical face & jaw weight painting failed on '{mesh_obj.name}': {e}\n")
 
 def assign_unweighted_vertices(mesh_obj, rig_obj, log_file):
     """Finds all vertices with zero weights and assigns them 100% to the nearest deforming bone segment."""
