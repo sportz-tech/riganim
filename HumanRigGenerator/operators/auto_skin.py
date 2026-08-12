@@ -548,26 +548,48 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                     upper_v = []
                     lower_v = []
                     
-                    if any(x in mesh_obj.name.lower() for x in ["upper", "top"]):
+                    if "tongue" in mesh_obj.name.lower():
+                        # Tongue is anchored at the throat base to DEF-head, and free at front to follow DEF-jaw
+                        mw = mesh_obj.matrix_world
+                        coords_y = [(mw @ v.co).y for v in mesh_obj.data.vertices]
+                        min_y = min(coords_y) # tip of tongue (forward)
+                        max_y = max(coords_y) # root of tongue (back towards throat)
+                        y_range = max(0.001, max_y - min_y)
+                        
+                        for v in mesh_obj.data.vertices:
+                            vy = (mw @ v.co).y
+                            t_back = (vy - min_y) / y_range # 0 at tip, 1 at base
+                            
+                            if t_back <= 0.40:
+                                vg_jaw.add([v.index], 1.0, 'REPLACE')
+                            elif t_back >= 0.85:
+                                vg_head.add([v.index], 1.0, 'REPLACE')
+                            else:
+                                blend = (t_back - 0.40) / 0.45
+                                blend = blend * blend * (3.0 - 2.0 * blend) # smooth S-curve
+                                vg_jaw.add([v.index], 1.0 - blend, 'REPLACE')
+                                vg_head.add([v.index], blend, 'REPLACE')
+                        log_file.write(f"Assigned anatomical gradient weights to tongue '{mesh_obj.name}' (jaw tip, throat head anchor).\n")
+                    elif any(x in mesh_obj.name.lower() for x in ["upper", "top"]):
                         upper_v = [v.index for v in mesh_obj.data.vertices]
+                        vg_head.add(upper_v, 1.0, 'REPLACE')
+                        log_file.write(f"Assigned {len(upper_v)} upper vertices to DEF-head.\n")
                     elif any(x in mesh_obj.name.lower() for x in ["lower", "bottom", "jaw"]):
                         lower_v = [v.index for v in mesh_obj.data.vertices]
-                    elif "tongue" in mesh_obj.name.lower():
-                        # Tongue is entirely on the lower jaw
-                        lower_v = [v.index for v in mesh_obj.data.vertices]
+                        vg_jaw.add(lower_v, 1.0, 'REPLACE')
+                        log_file.write(f"Assigned {len(lower_v)} lower vertices to DEF-jaw.\n")
                     else:
                         for v in mesh_obj.data.vertices:
                             if v.co.z > split_z:
                                 upper_v.append(v.index)
                             else:
                                 lower_v.append(v.index)
-                                
-                    if upper_v:
-                        vg_head.add(upper_v, 1.0, 'REPLACE')
-                        log_file.write(f"Assigned {len(upper_v)} upper vertices to DEF-head.\n")
-                    if lower_v:
-                        vg_jaw.add(lower_v, 1.0, 'REPLACE')
-                        log_file.write(f"Assigned {len(lower_v)} lower vertices to DEF-jaw.\n")
+                        if upper_v:
+                            vg_head.add(upper_v, 1.0, 'REPLACE')
+                            log_file.write(f"Assigned {len(upper_v)} upper vertices to DEF-head.\n")
+                        if lower_v:
+                            vg_jaw.add(lower_v, 1.0, 'REPLACE')
+                            log_file.write(f"Assigned {len(lower_v)} lower vertices to DEF-jaw.\n")
                         
                     # 4. Add Armature Modifier
                     mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
@@ -1094,6 +1116,12 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
     if not (mesh_obj and mesh_obj.type == 'MESH' and rig_obj and rig_obj.type == 'ARMATURE'):
         return
         
+    # Only run on the main character/body mesh (skip hair, clothing, eyes, tearline, teeth, tongue)
+    obj_name_l = mesh_obj.name.lower()
+    is_non_body = any(k in obj_name_l for k in ["hair", "shirt", "pant", "shoe", "cloth", "dress", "tear", "eye", "lash", "teeth", "tooth", "tongue", "occlusion", "sock", "glove", "hat", "cap", "bra", "under"])
+    if is_non_body:
+        return
+        
     try:
         mw = mesh_obj.matrix_world
         
@@ -1179,6 +1207,38 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
             
             is_forward_face = (vw.y < p_head.y - 0.015)
             
+            # STRICT UPPER / LOWER SEPARATION:
+            # 1. Any vertex above z_seam CANNOT have DEF-jaw, DEF-chin, or DEF-lip.lower*
+            if vw.z > z_seam:
+                try: vg_jaw.remove([v.index])
+                except: pass
+                try: vg_chin.remove([v.index])
+                except: pass
+                try: vg_lip_low.remove([v.index])
+                except: pass
+                if vg_lip_low_L:
+                    try: vg_lip_low_L.remove([v.index])
+                    except: pass
+                if vg_lip_low_R:
+                    try: vg_lip_low_R.remove([v.index])
+                    except: pass
+            
+            # 2. Any vertex below or equal to z_seam in the forward mouth/chin CANNOT have DEF-lip.upper* or DEF-mouth_root
+            if vw.z <= z_seam and is_forward_face and vw.z < p_nose.z:
+                try: vg_mouth_root.remove([v.index])
+                except: pass
+                try: vg_lip_up.remove([v.index])
+                except: pass
+                if vg_lip_up_L:
+                    try: vg_lip_up_L.remove([v.index])
+                    except: pass
+                if vg_lip_up_R:
+                    try: vg_lip_up_R.remove([v.index])
+                    except: pass
+                if vg_nose:
+                    try: vg_nose.remove([v.index])
+                    except: pass
+            
             if is_forward_face and vw.z < p_nose.z + 0.015:
                 dist_to_chin = (vw - p_chin).length
                 dist_to_lip_up = (vw - p_lip_up).length
@@ -1186,21 +1246,21 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
                 dist_to_corner_L = (vw - p_corner_L).length
                 dist_to_corner_R = (vw - p_corner_R).length
                 
-                # 1. Mouth corners
-                r_corner = 0.024 * (p_head.z - p_neck.z) / 0.26
+                # 1. Outer Mouth corners (restricted small radius of 1.2cm only at outer corner apex)
+                r_corner = 0.014 * (p_head.z - p_neck.z) / 0.26
                 is_near_corner_L = (dist_to_corner_L < r_corner)
                 is_near_corner_R = (dist_to_corner_R < r_corner)
                 
                 if is_near_corner_L:
                     w_corner = max(0.0, min(1.0, 1.0 - (dist_to_corner_L / r_corner)))
                     w_corner = w_corner * w_corner * (3.0 - 2.0 * w_corner)
-                    vg_corner_L.add([v.index], w_corner * 0.8, 'REPLACE')
+                    vg_corner_L.add([v.index], w_corner * 0.5, 'REPLACE')
                     if vg_corner_R:
                         vg_corner_R.remove([v.index])
                 elif is_near_corner_R:
                     w_corner = max(0.0, min(1.0, 1.0 - (dist_to_corner_R / r_corner)))
                     w_corner = w_corner * w_corner * (3.0 - 2.0 * w_corner)
-                    vg_corner_R.add([v.index], w_corner * 0.8, 'REPLACE')
+                    vg_corner_R.add([v.index], w_corner * 0.5, 'REPLACE')
                     if vg_corner_L:
                         vg_corner_L.remove([v.index])
                 else:
@@ -1211,14 +1271,6 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
                         
                 # 2. Lower Lip & Chin & Mandible (Z <= z_seam)
                 if vw.z <= z_seam:
-                    # Clear upper lip and upper face groups from lower lip/chin
-                    vg_mouth_root.remove([v.index])
-                    vg_lip_up.remove([v.index])
-                    if vg_lip_up_L: vg_lip_up_L.remove([v.index])
-                    if vg_lip_up_R: vg_lip_up_R.remove([v.index])
-                    if vg_nose: vg_nose.remove([v.index])
-                    
-                    # Lower lip vs Chin
                     if vw.z >= p_chin.z + 0.015:
                         # Lower lip area
                         w_lip_low = max(0.0, min(1.0, 1.0 - (dist_to_lip_low / 0.035)))
@@ -1246,13 +1298,6 @@ def paint_anatomical_face_and_jaw_weights(mesh_obj, rig_obj, log_file=None):
                         
                 # 3. Upper Lip & Maxilla & Philtrum (Z > z_seam)
                 else:
-                    # Clear jaw, chin, and lower lip groups from upper lip
-                    vg_jaw.remove([v.index])
-                    vg_chin.remove([v.index])
-                    vg_lip_low.remove([v.index])
-                    if vg_lip_low_L: vg_lip_low_L.remove([v.index])
-                    if vg_lip_low_R: vg_lip_low_R.remove([v.index])
-                    
                     w_lip_up = max(0.0, min(1.0, 1.0 - (dist_to_lip_up / 0.035)))
                     w_lip_up = w_lip_up * w_lip_up * (3.0 - 2.0 * w_lip_up)
                     

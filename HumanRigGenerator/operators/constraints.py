@@ -356,12 +356,12 @@ def setup_mouth_corner_constraints(obj):
                     if c.name in ["Child_Of_Jaw_Corner", "Copy_Jaw_Corner", "Copy_MouthRoot_Corner"]:
                         pb.constraints.remove(c)
                         
-                # Add Driver for Z Location (height follow)
+                # Add Driver for Z Location (height follow - subtle 25% follow so corner stretches naturally without pulling upper lip)
                 pb.driver_remove("location", 2) # 2 is Z index
                 fcurve_z = pb.driver_add("location", 2)
                 drv_z = fcurve_z.driver
                 drv_z.type = 'SCRIPTED'
-                drv_z.expression = f"(-0.05 * {scale}) * jaw_rot"
+                drv_z.expression = f"(-0.02 * {scale}) * jaw_rot"
                 
                 var_z = drv_z.variables.new()
                 var_z.name = "jaw_rot"
@@ -377,7 +377,7 @@ def setup_mouth_corner_constraints(obj):
                 fcurve_y = pb.driver_add("location", 1)
                 drv_y = fcurve_y.driver
                 drv_y.type = 'SCRIPTED'
-                drv_y.expression = f"(-0.02 * {scale}) * jaw_rot"
+                drv_y.expression = f"(-0.01 * {scale}) * jaw_rot"
                 
                 var_y = drv_y.variables.new()
                 var_y.name = "jaw_rot"
