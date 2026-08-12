@@ -394,6 +394,113 @@ class OBJECT_OT_auto_skin_mesh(bpy.types.Operator):
                     log_file.write(f"Eyeball skinning for '{mesh_obj.name}' succeeded!\n")
                     continue
                 
+                # Check if this mesh is a tear line, eye occlusion, or eyelash accessory mesh
+                is_eye_accessory = any(k in mesh_obj.name.lower() for k in ["tear", "tearline", "occlusion", "eyeocclusion", "eye_occlusion", "eyelash", "eyelashes", "lash", "lashes", "cornea", "eye_moisture"])
+                
+                if is_eye_accessory:
+                    log_file.write(f"Detected separate eye accessory mesh object '{mesh_obj.name}'. Binding to head & eyelids...\n")
+                    
+                    # 1. Clear original parenting and parent directly to the new rig
+                    matrix_world = mesh_obj.matrix_world.copy()
+                    mesh_obj.parent = None
+                    mesh_obj.matrix_world = matrix_world
+                    mesh_obj.parent = rig_obj
+                    mesh_obj.parent_type = 'OBJECT'
+                    mesh_obj.matrix_world = matrix_world
+                    log_file.write("Cleared parenting and reparented eye accessory mesh to rig object.\n")
+                    
+                    # 2. Clean existing modifiers and vertex groups
+                    for mod in list(mesh_obj.modifiers):
+                        if mod.type in ['ARMATURE', 'DATA_TRANSFER', 'SHRINKWRAP', 'MASK'] or "HRG_" in mod.name:
+                            mesh_obj.modifiers.remove(mod)
+                    for vg in list(mesh_obj.vertex_groups):
+                        mesh_obj.vertex_groups.remove(vg)
+                        
+                    # 3. Apply transforms
+                    bpy.ops.object.select_all(action='DESELECT')
+                    try:
+                        mesh_obj.select_set(True)
+                        context.view_layer.objects.active = mesh_obj
+                    except:
+                        pass
+                    try:
+                        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+                    except:
+                        pass
+                        
+                    # 4. Find the character body mesh to transfer exact eyelid/head weights
+                    body_obj = None
+                    for m in selected_meshes:
+                        if m != mesh_obj and m.type == 'MESH':
+                            if any(k in m.name.lower() for k in ["body", "skin", "base", "human", "character"]):
+                                body_obj = m
+                                break
+                    if not body_obj:
+                        for o in context.scene.objects:
+                            if o != mesh_obj and o.type == 'MESH' and not o.name.startswith("Wgt_"):
+                                if any(k in o.name.lower() for k in ["body", "skin", "base", "human", "character"]):
+                                    body_obj = o
+                                    break
+                                    
+                    transferred = False
+                    if body_obj and len(body_obj.vertex_groups) > 0:
+                        try:
+                            dt_mod = mesh_obj.modifiers.new(name="HRG_EyeAcc_Weights", type='DATA_TRANSFER')
+                            dt_mod.object = body_obj
+                            dt_mod.use_vert_data = True
+                            dt_mod.data_types_verts = {'VGROUP_WEIGHTS'}
+                            dt_mod.vert_mapping = 'POLYINTERP_NEAREST'
+                            
+                            bpy.ops.object.select_all(action='DESELECT')
+                            mesh_obj.select_set(True)
+                            context.view_layer.objects.active = mesh_obj
+                            bpy.ops.object.datalayout_transfer(modifier=dt_mod.name)
+                            
+                            if hasattr(context, "temp_override"):
+                                with context.temp_override(active_object=mesh_obj, selected_objects=[mesh_obj]):
+                                    bpy.ops.object.modifier_apply(modifier=dt_mod.name)
+                            else:
+                                bpy.ops.object.modifier_apply(modifier=dt_mod.name)
+                                
+                            if dt_mod.name in mesh_obj.modifiers:
+                                mesh_obj.modifiers.remove(mesh_obj.modifiers[dt_mod.name])
+                                
+                            # Strip any accidental non-head bone groups
+                            allowed_head_keywords = ["head", "neck", "eyelid", "eye_corner", "eye", "brow", "cheek", "nose", "face"]
+                            for vg in list(mesh_obj.vertex_groups):
+                                if not any(k in vg.name.lower() for k in allowed_head_keywords):
+                                    mesh_obj.vertex_groups.remove(vg)
+                                    
+                            transferred = True
+                            log_file.write(f"Transferred facial/eyelid weights from '{body_obj.name}' to '{mesh_obj.name}'.\n")
+                        except Exception as e_dt:
+                            log_file.write(f"Data transfer failed on '{mesh_obj.name}': {e_dt}\n")
+                            
+                    # Any vertex with zero weights is assigned 100% to DEF-head
+                    vg_head = mesh_obj.vertex_groups.get("DEF-head") or mesh_obj.vertex_groups.new(name="DEF-head")
+                    unweighted_v = []
+                    for v in mesh_obj.data.vertices:
+                        total_w = sum(g.weight for g in v.groups)
+                        if total_w < 0.001:
+                            unweighted_v.append(v.index)
+                    if unweighted_v:
+                        vg_head.add(unweighted_v, 1.0, 'REPLACE')
+                        log_file.write(f"Assigned {len(unweighted_v)} unweighted eye accessory vertices to DEF-head.\n")
+                        
+                    # Normalize weights
+                    for v in mesh_obj.data.vertices:
+                        tot = sum(g.weight for g in v.groups)
+                        if tot > 0.0001:
+                            for g in v.groups:
+                                g.weight /= tot
+                                
+                    # 5. Add Armature Modifier
+                    mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+                    mod.object = rig_obj
+                    mod.use_deform_preserve_volume = True
+                    log_file.write(f"Eye accessory skinning for '{mesh_obj.name}' succeeded!\n")
+                    continue
+                
                 # Check if this mesh is a separate teeth or mouth-internal object (like tongue)
                 is_mouth_internal = False
                 if any(x in mesh_obj.name.lower() for x in ["teeth", "tooth", "dental", "tongue"]):
@@ -996,14 +1103,14 @@ def assign_unweighted_vertices(mesh_obj, rig_obj, log_file):
     deform_bones = []
     mw_rig = rig_obj.matrix_world
     
-    is_hair = "hair" in mesh_obj.name.lower()
+    is_head_mesh = any(k in mesh_obj.name.lower() for k in ["hair", "head", "face", "tear", "eye", "lash", "brow", "teeth", "tooth", "tongue", "mouth", "ear", "beard", "mustache", "scalp", "eyelid", "occlusion"])
     
     for bone in rig_obj.data.bones:
         if bone.use_deform and bone.name.startswith("DEF-"):
-            if is_hair:
-                # Restrict hair to head, neck, upper spine, shoulders, and face bones
+            if is_head_mesh:
+                # Restrict head/hair/facial meshes to head, neck, upper spine, shoulders, and face bones
                 allowed_prefixes = ["DEF-head", "DEF-neck", "DEF-spine.003", "DEF-shoulder", "DEF-clavicle"]
-                allowed_face = ["DEF-ear", "DEF-eyebrow", "DEF-cheek", "DEF-nose", "DEF-jaw", "DEF-chin", "DEF-eyelid"]
+                allowed_face = ["DEF-ear", "DEF-eyebrow", "DEF-cheek", "DEF-nose", "DEF-jaw", "DEF-chin", "DEF-eyelid", "DEF-eye_corner", "DEF-eye", "DEF-lip"]
                 
                 is_allowed = False
                 for p in allowed_prefixes:
