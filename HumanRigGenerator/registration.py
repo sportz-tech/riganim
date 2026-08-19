@@ -214,6 +214,18 @@ def update_marker_size(self, context):
         if "Mkr_" in obj.name and obj.type == 'EMPTY':
             obj.empty_display_size = self.hrg_marker_size
 
+def update_controller_scale(self, context):
+    from .operators.controllers import update_armature_controller_scales
+    obj = context.active_object
+    if obj and obj.type == 'ARMATURE':
+        update_armature_controller_scales(obj, self.hrg_controller_scale)
+    for o in context.selected_objects:
+        if o.type == 'ARMATURE' and o != obj:
+            update_armature_controller_scales(o, self.hrg_controller_scale)
+    for area in context.screen.areas:
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()
+
 def update_marker_names(self, context):
     for obj in context.scene.objects:
         if "Mkr_" in obj.name:
@@ -348,6 +360,50 @@ def register():
         description="Show wire skeleton guide connecting the markers in real-time",
         default=True,
         update=update_marker_lines
+    )
+    bpy.types.Scene.hrg_controller_scale = bpy.props.FloatProperty(
+        name="Controller Scale",
+        description="Display scale of all bone controllers in the viewport",
+        default=1.0,
+        min=0.1,
+        max=5.0,
+        update=update_controller_scale
+    )
+    bpy.types.Scene.hrg_use_bbone_legs = bpy.props.BoolProperty(
+        name="Bendy Legs",
+        description="Enable Bendy Bones for legs (thighs and shins)",
+        default=False
+    )
+    bpy.types.Scene.hrg_bbone_segments_legs = bpy.props.IntProperty(
+        name="Leg Segments",
+        description="Number of Bendy Bone segments for leg bones",
+        default=5,
+        min=2,
+        max=16
+    )
+    bpy.types.Scene.hrg_use_bbone_arms = bpy.props.BoolProperty(
+        name="Bendy Arms",
+        description="Enable Bendy Bones for arms/wings (upper arms and forearms)",
+        default=False
+    )
+    bpy.types.Scene.hrg_bbone_segments_arms = bpy.props.IntProperty(
+        name="Arm Segments",
+        description="Number of Bendy Bone segments for arm bones",
+        default=5,
+        min=2,
+        max=16
+    )
+    bpy.types.Scene.hrg_use_bbone_spine = bpy.props.BoolProperty(
+        name="Bendy Spine",
+        description="Enable Bendy Bones for spine",
+        default=False
+    )
+    bpy.types.Scene.hrg_bbone_segments_spine = bpy.props.IntProperty(
+        name="Spine Segments",
+        description="Number of Bendy Bone segments for spine bones",
+        default=5,
+        min=2,
+        max=16
     )
     bpy.types.Scene.hrg_rig_type = bpy.props.EnumProperty(
         name="Rig Type",
@@ -997,7 +1053,11 @@ def unregister():
         "hrg_mesh_z_offset", "hrg_mesh_link_dups",
         "hrg_show_props", "hrg_prop_source_obj", "hrg_prop_object", "hrg_prop_target_actor", "hrg_prop_slot",
         "hrg_scene_action", "hrg_source_actor_to_copy",
-        "hrg_anim_source_rig", "hrg_anim_target_rig", "hrg_anim_transfer_action", "hrg_anim_make_copy"
+        "hrg_anim_source_rig", "hrg_anim_target_rig", "hrg_anim_transfer_action", "hrg_anim_make_copy",
+        "hrg_controller_scale",
+        "hrg_use_bbone_legs", "hrg_bbone_segments_legs",
+        "hrg_use_bbone_arms", "hrg_bbone_segments_arms",
+        "hrg_use_bbone_spine", "hrg_bbone_segments_spine"
     ]:
         try:
             delattr(bpy.types.Scene, prop)

@@ -22,6 +22,9 @@ def mirror_bone(arm_data, left_bone_name):
     # Mirror roll: standard Blender behavior for mirroring roll is -left_bone.roll
     right_bone.roll = -left_bone.roll
     right_bone.use_deform = left_bone.use_deform
+    right_bone.bbone_segments = left_bone.bbone_segments
+    right_bone.bbone_easein = left_bone.bbone_easein
+    right_bone.bbone_easeout = left_bone.bbone_easeout
     
     # Handle parenting
     if left_bone.parent:

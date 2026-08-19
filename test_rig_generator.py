@@ -6,7 +6,12 @@ import mathutils
 
 addon_dir = os.path.dirname(os.path.realpath(__file__))
 print(f"Addon directory: {addon_dir}")
-sys.path.append(addon_dir)
+sys.path.insert(0, addon_dir)
+
+# Clear sys.modules of any previous imports to ensure we load the local code
+for m in list(sys.modules.keys()):
+    if m.startswith("HumanRigGenerator") or m.startswith("MotionCaptureTransfer"):
+        del sys.modules[m]
 
 try:
     import HumanRigGenerator
@@ -18,6 +23,10 @@ try:
         print(f"Addon already registered or register skipped: {e}")
     
     # 1. Test Spawning Markers
+    # Clear default startup objects (like the default Cube) to ensure clean marker names
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete()
+
     print("Testing object.spawn_markers...")
     bpy.ops.object.spawn_markers()
     
@@ -66,6 +75,117 @@ try:
             sys.exit(1)
         print("Verified rig dynamically aligned to marker positions successfully!")
     bpy.ops.object.mode_set(mode='OBJECT')
+    
+    # 3b. Test Bendy Bones Generation
+    print("Testing Bendy Bones Rig Generation...")
+    # Enable B-Bones
+    bpy.context.scene.hrg_use_bbone_legs = True
+    bpy.context.scene.hrg_bbone_segments_legs = 8
+    bpy.context.scene.hrg_use_bbone_arms = True
+    bpy.context.scene.hrg_bbone_segments_arms = 6
+    bpy.context.scene.hrg_use_bbone_spine = True
+    bpy.context.scene.hrg_bbone_segments_spine = 7
+    
+    # Delete the standard rig first
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    bpy.data.objects.remove(rig, do_unlink=True)
+    
+    # Re-generate with B-Bones enabled
+    print("Re-generating rig with Bendy Bones enabled...")
+    bpy.ops.object.generate_human_rig(gender='MALE')
+    
+    # Verify the new rig
+    rig = bpy.data.objects.get("Human_Rig")
+    if not rig:
+        print("ERROR: Rig with Bendy Bones was not created successfully.")
+        sys.exit(1)
+        
+    # Check segment count on deform bones in EDIT mode
+    bpy.ops.object.mode_set(mode='EDIT')
+    
+    # Legs (thigh.L, shin.L, thigh.R, shin.R should have 8 segments and ease settings)
+    for bname in ["DEF-thigh.L", "DEF-thigh.R"]:
+        bone = rig.data.edit_bones.get(bname)
+        if not bone:
+            print(f"ERROR: Leg deform bone {bname} not found.")
+            sys.exit(1)
+        if bone.bbone_segments != 8:
+            print(f"ERROR: Bone {bname} has {bone.bbone_segments} segments, expected 8.")
+            sys.exit(1)
+        if abs(bone.bbone_easein - 1.0) > 0.001 or abs(bone.bbone_easeout - 0.0) > 0.001:
+            print(f"ERROR: Bone {bname} has easein={bone.bbone_easein}, easeout={bone.bbone_easeout}, expected 1.0, 0.0.")
+            sys.exit(1)
+            
+    for bname in ["DEF-shin.L", "DEF-shin.R"]:
+        bone = rig.data.edit_bones.get(bname)
+        if not bone:
+            print(f"ERROR: Leg deform bone {bname} not found.")
+            sys.exit(1)
+        if bone.bbone_segments != 8:
+            print(f"ERROR: Bone {bname} has {bone.bbone_segments} segments, expected 8.")
+            sys.exit(1)
+        if abs(bone.bbone_easein - 0.0) > 0.001 or abs(bone.bbone_easeout - 1.0) > 0.001:
+            print(f"ERROR: Bone {bname} has easein={bone.bbone_easein}, easeout={bone.bbone_easeout}, expected 0.0, 1.0.")
+            sys.exit(1)
+            
+    # Arms (upper_arm.L, forearm.L, upper_arm.R, forearm.R should have 6 segments and ease settings)
+    for bname in ["DEF-upper_arm.L", "DEF-upper_arm.R"]:
+        bone = rig.data.edit_bones.get(bname)
+        if not bone:
+            print(f"ERROR: Arm deform bone {bname} not found.")
+            sys.exit(1)
+        if bone.bbone_segments != 6:
+            print(f"ERROR: Bone {bname} has {bone.bbone_segments} segments, expected 6.")
+            sys.exit(1)
+        if abs(bone.bbone_easein - 1.0) > 0.001 or abs(bone.bbone_easeout - 0.0) > 0.001:
+            print(f"ERROR: Bone {bname} has easein={bone.bbone_easein}, easeout={bone.bbone_easeout}, expected 1.0, 0.0.")
+            sys.exit(1)
+            
+    for bname in ["DEF-forearm.L", "DEF-forearm.R"]:
+        bone = rig.data.edit_bones.get(bname)
+        if not bone:
+            print(f"ERROR: Arm deform bone {bname} not found.")
+            sys.exit(1)
+        if bone.bbone_segments != 6:
+            print(f"ERROR: Bone {bname} has {bone.bbone_segments} segments, expected 6.")
+            sys.exit(1)
+        if abs(bone.bbone_easein - 0.0) > 0.001 or abs(bone.bbone_easeout - 1.0) > 0.001:
+            print(f"ERROR: Bone {bname} has easein={bone.bbone_easein}, easeout={bone.bbone_easeout}, expected 0.0, 1.0.")
+            sys.exit(1)
+            
+    # Spine (spine, spine.001, spine.002, spine.003, neck should have 7 segments and 0 ease settings)
+    for bname in ["DEF-spine", "DEF-spine.001", "DEF-spine.002", "DEF-spine.003", "DEF-neck"]:
+        bone = rig.data.edit_bones.get(bname)
+        if not bone:
+            print(f"ERROR: Spine deform bone {bname} not found.")
+            sys.exit(1)
+        if bone.bbone_segments != 7:
+            print(f"ERROR: Bone {bname} has {bone.bbone_segments} segments, expected 7.")
+            sys.exit(1)
+        if abs(bone.bbone_easein - 0.0) > 0.001 or abs(bone.bbone_easeout - 0.0) > 0.001:
+            print(f"ERROR: Bone {bname} has easein={bone.bbone_easein}, easeout={bone.bbone_easeout}, expected 0.0, 0.0.")
+            sys.exit(1)
+            
+    # Verify other bones have 1 segment (e.g. DEF-head, DEF-pelvis, DEF-hand.L)
+    for bname in ["DEF-head", "DEF-pelvis", "DEF-hand.L"]:
+        bone = rig.data.edit_bones.get(bname)
+        if bone and bone.bbone_segments != 1:
+            print(f"ERROR: Bone {bname} has {bone.bbone_segments} segments, expected 1.")
+            sys.exit(1)
+            
+    # Verify display type is WIRE
+    if rig.data.display_type != 'WIRE':
+        print(f"ERROR: Armature display type is {rig.data.display_type}, expected WIRE.")
+        sys.exit(1)
+        
+    bpy.ops.object.mode_set(mode='OBJECT')
+    print("Bendy Bones rig generation successfully verified!")
+    
+    # Disable B-Bones for the remaining tests
+    bpy.context.scene.hrg_use_bbone_legs = False
+    bpy.context.scene.hrg_use_bbone_arms = False
+    bpy.context.scene.hrg_use_bbone_spine = False
     
     # 4. Test Animation Presets (Sequencing)
     # Active object must be the rig
@@ -134,10 +254,12 @@ try:
     
     # 8. Test Scene Camera Setup & Tracking
     print("Testing object.setup_scene_camera...")
-    bpy.ops.object.setup_scene_camera(shot_type='CLOSEUP', angle='FRONT')
+    bpy.context.scene.hrg_cam_shot = 'CLOSEUP'
+    bpy.context.scene.hrg_cam_angle = 'FRONT'
+    bpy.ops.object.setup_scene_camera()
     
     camera = bpy.data.objects.get("Rig_Camera")
-    target = bpy.data.objects.get("Cam_Target")
+    target = bpy.data.objects.get(f"Cam_Target_{rig.name}")
     if not camera or not target:
         print("ERROR: Camera or target empty was not spawned successfully.")
         sys.exit(1)
@@ -225,7 +347,7 @@ try:
     print("Spawning markers with cylinder active (height = 3.0m)...")
     bpy.ops.object.spawn_markers()
     
-    mkr_head = bpy.data.objects.get("Mkr_head")
+    mkr_head = bpy.data.objects.get(f"{cylinder_mesh.name}_Mkr_head")
     if not mkr_head:
         print("ERROR: Head marker not found after mesh-aware spawn.")
         sys.exit(1)

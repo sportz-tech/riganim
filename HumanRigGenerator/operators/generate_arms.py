@@ -1,4 +1,5 @@
 # operators/generate_arms.py
+import bpy
 import mathutils
 from ..utils.bones import create_bone, assign_to_collection, get_marker_pos
 from ..utils.naming import get_deform_name, get_org_name
@@ -89,21 +90,25 @@ def generate_arm_bones(arm_data, gender="MALE", marker_positions=None):
         assign_to_collection(arm_data, def_shoulder, "Deform")
         
         # Upper Arm
+        uarm_segments = bpy.context.scene.hrg_bbone_segments_arms if bpy.context.scene.hrg_use_bbone_arms else 1
         def_uarm = get_deform_name(f"upper_arm{side_suffix}")
         org_uarm = get_org_name(f"upper_arm{side_suffix}")
         uarm_bone = arm_data.edit_bones.get(org_uarm)
         
         create_bone(arm_data, def_uarm, uarm_bone.head.copy(), uarm_bone.tail.copy(), uarm_bone.roll,
-                    parent_name=def_shoulder, use_connect=False, is_deform=True)
+                    parent_name=def_shoulder, use_connect=False, is_deform=True, 
+                    bbone_segments=uarm_segments, bbone_easein=1.0, bbone_easeout=0.0)
         assign_to_collection(arm_data, def_uarm, "Deform")
         
         # Forearm
+        farm_segments = bpy.context.scene.hrg_bbone_segments_arms if bpy.context.scene.hrg_use_bbone_arms else 1
         def_farm = get_deform_name(f"forearm{side_suffix}")
         org_farm = get_org_name(f"forearm{side_suffix}")
         farm_bone = arm_data.edit_bones.get(org_farm)
         
         create_bone(arm_data, def_farm, farm_bone.head.copy(), farm_bone.tail.copy(), farm_bone.roll,
-                    parent_name=def_uarm, use_connect=False, is_deform=True)
+                    parent_name=def_uarm, use_connect=False, is_deform=True, 
+                    bbone_segments=farm_segments, bbone_easein=0.0, bbone_easeout=1.0)
         assign_to_collection(arm_data, def_farm, "Deform")
         
         # Hand

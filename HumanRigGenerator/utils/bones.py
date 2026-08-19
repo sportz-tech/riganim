@@ -10,7 +10,7 @@ def get_pose_bone(obj, name):
     """Retrieves a pose bone from the armature object. Object must be in POSE mode."""
     return obj.pose.bones.get(name)
 
-def create_bone(arm_data, name, head, tail, roll=0.0, parent_name=None, use_connect=False, is_deform=True):
+def create_bone(arm_data, name, head, tail, roll=0.0, parent_name=None, use_connect=False, is_deform=True, bbone_segments=1, bbone_easein=0.0, bbone_easeout=0.0):
     """Creates a new edit bone in the armature. Armature must be in EDIT mode."""
     # If bone already exists, return it
     bone = arm_data.edit_bones.get(name)
@@ -27,6 +27,11 @@ def create_bone(arm_data, name, head, tail, roll=0.0, parent_name=None, use_conn
         if parent_bone:
             bone.parent = parent_bone
             bone.use_connect = use_connect
+            
+    if bbone_segments > 1:
+        bone.bbone_segments = bbone_segments
+        bone.bbone_easein = bbone_easein
+        bone.bbone_easeout = bbone_easeout
             
     return bone
 
@@ -446,16 +451,16 @@ def find_character_mesh(context):
     """Finds the most likely character mesh in the scene."""
     # 1. Check active object
     active = context.active_object
-    if active and active.type == 'MESH':
+    if active and active.type == 'MESH' and not active.name.startswith("Wgt_"):
         return active
         
     # 2. Check selected objects
-    selected_meshes = [obj for obj in context.selected_objects if obj.type == 'MESH']
+    selected_meshes = [obj for obj in context.selected_objects if obj.type == 'MESH' and not obj.name.startswith("Wgt_")]
     if selected_meshes:
         return selected_meshes[0]
         
     # 3. Scan all meshes in the scene and pick the one with the most vertices
-    all_meshes = [obj for obj in context.scene.objects if obj.type == 'MESH']
+    all_meshes = [obj for obj in context.scene.objects if obj.type == 'MESH' and not obj.name.startswith("Wgt_")]
     if all_meshes:
         # Sort by vertex count descending to find the main character mesh
         all_meshes.sort(key=lambda o: len(o.data.vertices), reverse=True)

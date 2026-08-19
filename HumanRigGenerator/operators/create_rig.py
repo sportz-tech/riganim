@@ -127,7 +127,10 @@ class OBJECT_OT_generate_human_rig(bpy.types.Operator):
                             char_meshes.append(m)
                             
                 for m in char_meshes:
-                    m.select_set(True)
+                    try:
+                        m.select_set(True)
+                    except:
+                        pass
                     
                 obj.select_set(True) # Select the newly generated rig
                 context.view_layer.objects.active = active_mesh
@@ -137,10 +140,12 @@ class OBJECT_OT_generate_human_rig(bpy.types.Operator):
                 bpy.ops.object.auto_skin_mesh()
                 
                 # 2. Automatically sync clothing weights to character body
-                try:
-                    bpy.ops.object.fix_clothing_clipping()
-                except Exception:
-                    pass
+                selected_meshes = [o for o in context.selected_objects if o.type == 'MESH']
+                if len(selected_meshes) >= 2:
+                    try:
+                        bpy.ops.object.fix_clothing_clipping()
+                    except Exception:
+                        pass
                     
                 # Re-select rig and put in Pose mode for instant animation
                 if context.object and context.object.mode != 'OBJECT':

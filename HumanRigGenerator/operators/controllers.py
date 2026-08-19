@@ -132,6 +132,58 @@ def generate_body_controllers_edit(arm_data, gender="MALE"):
             )
             assign_to_collection(arm_data, ctrl_fingers, "Arms IK")
 
+def get_bone_base_scale(name):
+    """Returns the default base scale (x, y, z) for a given control bone name."""
+    if "root" in name:
+        return (1.0, 1.0, 1.0)
+    elif "pelvis" in name or "spine.003" in name: # Hips and Chest
+        return (1.5, 1.5, 1.5)
+    elif "neck" in name:
+        return (1.2, 1.2, 1.2)
+    elif "spine" in name or "tail" in name:
+        return (1.2, 1.2, 1.2)
+    elif "head" in name:
+        return (1.4, 1.4, 1.4)
+    elif "shoulder" in name:
+        return (0.4, 0.4, 0.4)
+    elif "hand_IK" in name:
+        return (0.5, 0.5, 0.5)
+    elif "foot_IK" in name:
+        return (0.7, 1.2, 0.7)
+    elif "elbow" in name or "knee" in name:
+        return (0.2, 0.2, 0.2)
+    elif "FK" in name:
+        return (0.4, 0.4, 0.4)
+    elif "eyes_look" in name:
+        return (0.6, 0.2, 0.2)
+    elif "eye_look" in name:
+        return (0.1, 0.1, 0.1)
+    elif "jaw" in name:
+        return (0.6, 0.6, 0.6)
+    elif "face_root" in name:
+        return (0.8, 0.8, 0.8)
+    elif "mouth_root" in name:
+        return (0.5, 0.5, 0.5)
+    elif "fingers" in name:
+        return (0.4, 0.4, 0.4)
+    else:
+        return (0.15, 0.15, 0.15)
+
+
+def update_armature_controller_scales(obj, scale):
+    """Updates the custom shape scales for all controller bones in the armature."""
+    if not obj or obj.type != 'ARMATURE':
+        return
+    for pb in obj.pose.bones:
+        if pb.name.startswith("CTRL-") or pb.custom_shape is not None:
+            base_scale = get_bone_base_scale(pb.name)
+            pb.custom_shape_scale_xyz = (
+                base_scale[0] * scale,
+                base_scale[1] * scale,
+                base_scale[2] * scale
+            )
+
+
 def setup_controllers_pose(obj):
     """Assigns custom widget shapes and bone color themes in POSE mode."""
     # Ensure widgets exist
@@ -145,10 +197,6 @@ def setup_controllers_pose(obj):
     # 1. Setup Bone Colors & Widgets
     for pb in obj.pose.bones:
         name = pb.name
-        
-        # Base names without CTRL- or side suffixes
-        clean_name = name.replace("CTRL-", "")
-        base_core = clean_name.split(".")[0] # e.g. "hand_IK" -> "hand_IK"
         
         # Color Palettes: Left = Blue (THEME_05), Right = Red (THEME_01), Center = Green (THEME_04)
         if name.startswith("CTRL-"):
@@ -168,56 +216,49 @@ def setup_controllers_pose(obj):
                 pb.custom_shape = w_root
             elif "pelvis" in name or "spine.003" in name: # Hips and Chest
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (1.5, 1.5, 1.5)
             elif "neck" in name:
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (1.2, 1.2, 1.2)
                 pb.custom_shape_translation = (0.0, pb.bone.length * 0.5, 0.0)
             elif "spine" in name or "tail" in name:
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (1.2, 1.2, 1.2)
             elif "head" in name:
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (1.4, 1.4, 1.4)
                 pb.custom_shape_translation = (0.0, pb.bone.length * 0.5, 0.0)
             elif "shoulder" in name:
                 pb.custom_shape = w_sphere
-                pb.custom_shape_scale_xyz = (0.4, 0.4, 0.4)
             elif "hand_IK" in name:
                 pb.custom_shape = w_cube
-                pb.custom_shape_scale_xyz = (0.5, 0.5, 0.5)
             elif "foot_IK" in name:
                 pb.custom_shape = w_cube
-                pb.custom_shape_scale_xyz = (0.7, 1.2, 0.7)
             elif "elbow" in name or "knee" in name:
                 pb.custom_shape = w_sphere
-                pb.custom_shape_scale_xyz = (0.2, 0.2, 0.2)
             elif "FK" in name:
                 # FK limb controls get circular shapes aligned to their axes
                 pb.custom_shape = w_circle_x
-                pb.custom_shape_scale_xyz = (0.4, 0.4, 0.4)
             elif "eyes_look" in name:
                 pb.custom_shape = w_cube
-                pb.custom_shape_scale_xyz = (0.6, 0.2, 0.2)
             elif "eye_look" in name:
                 pb.custom_shape = w_sphere
-                pb.custom_shape_scale_xyz = (0.1, 0.1, 0.1)
             elif "jaw" in name:
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (0.6, 0.6, 0.6)
             elif "face_root" in name:
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (0.8, 0.8, 0.8)
             elif "mouth_root" in name:
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (0.5, 0.5, 0.5)
             elif "fingers" in name:
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (0.4, 0.4, 0.4)
             else:
                 # Fallback circle shape for details (fingers, face)
                 pb.custom_shape = w_circle_z
-                pb.custom_shape_scale_xyz = (0.15, 0.15, 0.15)
+                
+            # Apply dynamic custom shape scale factoring in the scene setting
+            base_scale = get_bone_base_scale(name)
+            scale_mult = bpy.context.scene.hrg_controller_scale
+            pb.custom_shape_scale_xyz = (
+                base_scale[0] * scale_mult,
+                base_scale[1] * scale_mult,
+                base_scale[2] * scale_mult
+            )
                 
             # Lock eyeball location and look targets scale/rotation
             if "eye.L" in name or "eye.R" in name:

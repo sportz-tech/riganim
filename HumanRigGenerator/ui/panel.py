@@ -202,10 +202,38 @@ class VIEW3D_PT_human_rig_generator(bpy.types.Panel):
         if scene.hrg_show_generator:
             col = box.column(align=True)
             col.prop(scene, "hrg_rig_type", text="Rig Type")
+            
+            # Bendy Bone Options
+            col.separator()
+            col.label(text="Bendy Bone Settings:", icon='MOD_ARMATURE')
+            
+            # Legs
+            col.prop(scene, "hrg_use_bbone_legs", text="Bendy Legs")
+            if scene.hrg_use_bbone_legs:
+                col.prop(scene, "hrg_bbone_segments_legs", text="Leg Segments", slider=True)
+                
+            # Arms
+            col.prop(scene, "hrg_use_bbone_arms", text="Bendy Arms")
+            if scene.hrg_use_bbone_arms:
+                col.prop(scene, "hrg_bbone_segments_arms", text="Arm Segments", slider=True)
+                
+            # Spine
+            col.prop(scene, "hrg_use_bbone_spine", text="Bendy Spine")
+            if scene.hrg_use_bbone_spine:
+                col.prop(scene, "hrg_bbone_segments_spine", text="Spine Segments", slider=True)
+                
+            col.separator()
             col.operator("object.generate_human_rig", text="Generate Rig (Auto-Skin & Bind)", icon='ARMATURE_DATA')
         
         # 3. Animation Presets (visible when rig is selected)
         if obj and obj.type == 'ARMATURE':
+            # Rig Display Options
+            box_disp = layout.box()
+            box_disp.label(text="Rig Display Options:", icon='OUTLINER_OB_ARMATURE')
+            col_disp = box_disp.column(align=True)
+            col_disp.prop(scene, "hrg_controller_scale", text="Controller Scale", slider=True)
+            col_disp.prop(obj.data, "show_bone_custom_shapes", text="Show Custom Shapes")
+
             # Section A: Animation Sequencer
             box_anim = layout.box()
             row_anim = box_anim.row(align=True)

@@ -80,6 +80,29 @@ def generate_bird_bones(arm_data, marker_positions=None):
         def_name = get_deform_name(name)
         parent_def = get_deform_name(parent) if parent else None
         
+        # Check B-Bone segments based on bone type
+        bb_segments = 1
+        bb_easein = 0.0
+        bb_easeout = 0.0
+        scene = bpy.context.scene
+        if "thigh" in name or "shin" in name or "foot" in name:
+            if scene.hrg_use_bbone_legs:
+                bb_segments = scene.hrg_bbone_segments_legs
+                if "thigh" in name:
+                    bb_easein = 1.0
+                else: # shin or foot
+                    bb_easeout = 1.0
+        elif "upper_arm" in name or "forearm" in name or "hand" in name:
+            if scene.hrg_use_bbone_arms:
+                bb_segments = scene.hrg_bbone_segments_arms
+                if "upper_arm" in name:
+                    bb_easein = 1.0
+                else: # forearm or hand
+                    bb_easeout = 1.0
+        elif "spine" in name or "neck" in name or "tail" in name:
+            if scene.hrg_use_bbone_spine:
+                bb_segments = scene.hrg_bbone_segments_spine
+                
         create_bone(
             arm_data, 
             def_name, 
@@ -88,7 +111,10 @@ def generate_bird_bones(arm_data, marker_positions=None):
             roll, 
             parent_name=parent_def, 
             use_connect=(parent_def is not None and "pelvis" not in name and "clavicle" not in name and "thigh" not in name), 
-            is_deform=True
+            is_deform=True,
+            bbone_segments=bb_segments,
+            bbone_easein=bb_easein,
+            bbone_easeout=bb_easeout
         )
         assign_to_collection(arm_data, def_name, "Deform")
         

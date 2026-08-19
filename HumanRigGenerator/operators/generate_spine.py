@@ -1,4 +1,5 @@
 # operators/generate_spine.py
+import bpy
 import mathutils
 from ..utils.bones import create_bone, assign_to_collection, get_marker_pos
 from ..utils.naming import get_deform_name, get_org_name
@@ -90,6 +91,10 @@ def generate_spine_bones(arm_data, gender="MALE", marker_positions=None):
         elif name == "head":
             parent = get_deform_name("neck")
             
+        spine_segments = 1
+        if bpy.context.scene.hrg_use_bbone_spine and name in ["spine", "spine.001", "spine.002", "spine.003", "neck"]:
+            spine_segments = bpy.context.scene.hrg_bbone_segments_spine
+            
         bone = create_bone(
             arm_data,
             def_name,
@@ -98,7 +103,8 @@ def generate_spine_bones(arm_data, gender="MALE", marker_positions=None):
             roll,
             parent_name=parent,
             use_connect=(parent is not None and name != "pelvis" and name != "spine.001"),
-            is_deform=True
+            is_deform=True,
+            bbone_segments=spine_segments
         )
         assign_to_collection(arm_data, def_name, "Deform")
         
