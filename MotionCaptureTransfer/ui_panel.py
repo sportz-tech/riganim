@@ -53,6 +53,9 @@ class VIEW3D_PT_mocap_transfer_panel(bpy.types.Panel):
         box_mode = box_source.box()
         box_mode.label(text="Detection Mode", icon='TRACKING')
         box_mode.prop(scene, "hrg_mocap_capture_mode", expand=True)
+        if scene.hrg_mocap_capture_mode in ['FULL', 'BODY']:
+            box_mode.prop(scene, "hrg_mocap_pose_complexity", text="Pose Model")
+        box_mode.prop(scene, "hrg_mocap_capture_resolution", text="Resolution")
         
         # Mocap Running status indicator
         if scene.hrg_mocap_active:
@@ -155,6 +158,26 @@ def register():
         ],
         default='FULL'
     )
+    bpy.types.Scene.hrg_mocap_pose_complexity = bpy.props.EnumProperty(
+        name="Pose Model Complexity",
+        description="Choose MediaPipe Pose model tracking complexity (Lite = fastest, Heavy = most accurate)",
+        items=[
+            ('LITE', "Lite (Fastest)", "Lighter model, highest frame rate"),
+            ('FULL', "Full (Balanced)", "Standard model, balanced tracking & speed"),
+            ('HEAVY', "Heavy (Most Accurate)", "Heavier model, best hand/leg tracking precision"),
+        ],
+        default='FULL'
+    )
+    bpy.types.Scene.hrg_mocap_capture_resolution = bpy.props.EnumProperty(
+        name="Processing Resolution",
+        description="Resolution of frames fed into MediaPipe (lower = higher FPS, higher = finer tracking)",
+        items=[
+            ('LOW', "Low (480x270)", "Fastest processing, good for older CPUs"),
+            ('MEDIUM', "Medium (640x360)", "Balanced performance & detail (Default)"),
+            ('HIGH', "High (1280x720)", "Sharpest tracking, higher CPU requirement"),
+        ],
+        default='MEDIUM'
+    )
     bpy.types.Scene.hrg_mocap_active = bpy.props.BoolProperty(
         name="Mocap Stream Active",
         default=False
@@ -250,6 +273,8 @@ def unregister():
     del bpy.types.Scene.hrg_mocap_source
     del bpy.types.Scene.hrg_mocap_camera_index
     del bpy.types.Scene.hrg_mocap_capture_mode
+    del bpy.types.Scene.hrg_mocap_pose_complexity
+    del bpy.types.Scene.hrg_mocap_capture_resolution
     del bpy.types.Scene.hrg_mocap_active
     del bpy.types.Scene.hrg_mocap_backend_mode
     del bpy.types.Scene.hrg_mocap_show_visualizer

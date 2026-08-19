@@ -2148,7 +2148,16 @@ class MOCAP_OT_live_capture(bpy.types.Operator):
                     python_exe = prefix_python
             
             mocap_mode = getattr(context.scene, "hrg_mocap_capture_mode", "FULL")
-            cmd = [python_exe, "-u", backend_script, "--camera", str(camera_idx), "--port", "5005", "--mode", mocap_mode]
+            pose_complexity = getattr(context.scene, "hrg_mocap_pose_complexity", "FULL")
+            resolution = getattr(context.scene, "hrg_mocap_capture_resolution", "MEDIUM")
+            cmd = [
+                python_exe, "-u", backend_script, 
+                "--camera", str(camera_idx), 
+                "--port", "5005", 
+                "--mode", mocap_mode,
+                "--pose-complexity", pose_complexity,
+                "--resolution", resolution
+            ]
             if not context.scene.hrg_mocap_show_visualizer:
                 cmd.append("--no-preview")
             print("[Mocap Addon] Starting external backend:", cmd)

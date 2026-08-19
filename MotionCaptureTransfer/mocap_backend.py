@@ -36,20 +36,33 @@ except Exception as e:
 # Setup paths relative to script
 addon_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(addon_dir, "models")
-pose_model = os.path.join(models_dir, "pose_landmarker_lite.task")
 face_model = os.path.join(models_dir, "face_landmarker.task")
 hand_model = os.path.join(models_dir, "hand_landmarker.task")
 
-def ensure_models_exist():
+def ensure_models_exist(mode, complexity):
     import urllib.request
     import zipfile
     os.makedirs(models_dir, exist_ok=True)
+    
+    pose_model_name = f"pose_landmarker_{complexity.lower()}.task"
+    pose_model_path = os.path.join(models_dir, pose_model_name)
+    
     urls = {
-        pose_model: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+        pose_model_path: f"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_{complexity.lower()}/float16/1/pose_landmarker_{complexity.lower()}.task",
         face_model: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
         hand_model: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
     }
-    for path, url in urls.items():
+    
+    required_paths = []
+    if mode in ["FULL", "BODY"]:
+        required_paths.append(pose_model_path)
+    if mode in ["FULL", "FACE"]:
+        required_paths.append(face_model)
+    if mode in ["FULL", "BODY", "HANDS"]:
+        required_paths.append(hand_model)
+        
+    for path in required_paths:
+        url = urls[path]
         is_valid = False
         if os.path.exists(path) and os.path.getsize(path) > 100000:
             try:
@@ -236,23 +249,27 @@ def main():
     parser.add_argument("--camera", type=int, default=0, help="Webcam camera index")
     parser.add_argument("--port", type=int, default=5005, help="UDP transmission port")
     parser.add_argument("--mode", type=str, default="FULL", choices=["FULL", "BODY", "FACE", "HANDS"], help="Mocap detection mode (FULL, BODY, FACE, HANDS)")
+    parser.add_argument("--pose-complexity", type=str, default="FULL", choices=["LITE", "FULL", "HEAVY"], help="Pose model complexity (LITE, FULL, HEAVY)")
+    parser.add_argument("--resolution", type=str, default="MEDIUM", choices=["LOW", "MEDIUM", "HIGH"], help="Webcam and MediaPipe processing resolution (LOW, MEDIUM, HIGH)")
     parser.add_argument("--no-preview", action="store_true", help="Hide visualizer preview window for higher FPS")
     args = parser.parse_args()
 
-    ensure_models_exist()
+    ensure_models_exist(args.mode, args.pose_complexity)
 
     # Create UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_address = ("127.0.0.1", args.port)
 
     # Initialize Landmarkers based on selected mode
-    print(f"Initializing MediaPipe models for mode: {args.mode}...")
+    print(f"Initializing MediaPipe models for mode: {args.mode} (Complexity: {args.pose_complexity})...")
     pose_landmarker = None
     face_landmarker = None
     hand_landmarker = None
 
     if args.mode in ["FULL", "BODY"]:
-        base_options_pose = python.BaseOptions(model_asset_path=pose_model)
+        pose_model_name = f"pose_landmarker_{args.pose_complexity.lower()}.task"
+        pose_model_path = os.path.join(models_dir, pose_model_name)
+        base_options_pose = python.BaseOptions(model_asset_path=pose_model_path)
         options_pose = vision.PoseLandmarkerOptions(
             base_options=base_options_pose,
             running_mode=vision.RunningMode.VIDEO,
@@ -285,8 +302,15 @@ def main():
         )
         hand_landmarker = vision.HandLandmarker.create_from_options(options_hand)
 
+    # Resolve processing and capture resolution
+    res_w, res_h = 640, 360
+    if args.resolution == "LOW":
+        res_w, res_h = 480, 270
+    elif args.resolution == "HIGH":
+        res_w, res_h = 1280, 720
+
     # Start Camera capture
-    print(f"Opening camera index {args.camera}...")
+    print(f"Opening camera index {args.camera} with resolution {res_w}x{res_h}...")
     cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
     if not cap.isOpened():
         cap = cv2.VideoCapture(args.camera)
@@ -295,8 +319,8 @@ def main():
         sys.exit(1)
 
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, res_w)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, res_h)
     cap.set(cv2.CAP_PROP_FPS, 60)
 
     print("Mocap Backend started successfully! Sending data on UDP port", args.port)
@@ -312,6 +336,9 @@ def main():
     last_timestamp_ms = 0
     smoother = LandmarkSmoother(mincutoff=0.8, beta=0.03, deadband=0.0018)
 
+    # Initialize high-performance thread pool executor for concurrent model inference
+    executor = ThreadPoolExecutor(max_workers=3)
+
     try:
         while cap.isOpened():
             ret, frame = cap.read()
@@ -321,10 +348,10 @@ def main():
             # Mirror frame
             frame = cv2.flip(frame, 1)
             
-            # Force resize frame to 480x270 for ultra-fast AI processing
+            # Resize frame for MediaPipe processing if size differs
             H, W, _ = frame.shape
-            if W != 480 or H != 270:
-                frame = cv2.resize(frame, (480, 270))
+            if W != res_w or H != res_h:
+                frame = cv2.resize(frame, (res_w, res_h))
                 H, W, _ = frame.shape
 
             # Convert to MediaPipe format
@@ -338,10 +365,18 @@ def main():
                 timestamp_ms = last_timestamp_ms + 10
             last_timestamp_ms = timestamp_ms
 
-            # Run models directly (fast, stable, and zero thread-locking contention)
-            pose_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms) if pose_landmarker else None
-            face_result = face_landmarker.detect_for_video(mp_image, timestamp_ms + 1) if face_landmarker else None
-            hand_result = hand_landmarker.detect_for_video(mp_image, timestamp_ms + 2) if hand_landmarker else None
+            # Run models in parallel using ThreadPoolExecutor to prevent CPU sequential bottlenecks
+            futures = {}
+            if pose_landmarker:
+                futures['pose'] = executor.submit(pose_landmarker.detect_for_video, mp_image, timestamp_ms)
+            if face_landmarker:
+                futures['face'] = executor.submit(face_landmarker.detect_for_video, mp_image, timestamp_ms + 1)
+            if hand_landmarker:
+                futures['hand'] = executor.submit(hand_landmarker.detect_for_video, mp_image, timestamp_ms + 2)
+
+            pose_result = futures['pose'].result() if 'pose' in futures else None
+            face_result = futures['face'].result() if 'face' in futures else None
+            hand_result = futures['hand'].result() if 'hand' in futures else None
 
             # Stabilize landmarks with deadband filter to eliminate stationary fluctuation/jitter
             raw_pose_lms = pose_result.pose_landmarks[0] if (pose_result and pose_result.pose_landmarks and len(pose_result.pose_landmarks) > 0) else None
@@ -417,6 +452,11 @@ def main():
         print("\nShutdown requested by user.")
     finally:
         print("Cleaning up resources...")
+        try:
+            if 'executor' in locals() and executor:
+                executor.shutdown(wait=False)
+        except:
+            pass
         try:
             if 'cap' in locals() and cap is not None:
                 cap.release()
